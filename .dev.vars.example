@@ -1,7 +1,7 @@
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_PUBLISHABLE_KEY=sb_publishable_replace_me
-RESEND_API_KEY=re_replace_me
-EMAIL_SENDER=The Points League <league@updates.example.com>
+GMAIL_SCRIPT_URL=https://script.google.com/macros/s/replace-me/exec
+GMAIL_SCRIPT_TOKEN=generate-a-long-random-secret
 SITE_OWNER_EMAIL=commissioner@example.com
 SITE_PUBLIC_URL=https://points.example.com
 ODDS_API_KEY=replace_me
