@@ -6,6 +6,6 @@
   "compatibility_flags": ["nodejs_compat"],
   "assets": { "binding": "ASSETS", "directory": "./dist/client" },
   "images": { "binding": "IMAGES" },
-  "d1_databases": [{ "binding": "DB", "database_name": "the-points-league", "database_id": "00000000-0000-4000-8000-000000000000", "migrations_dir": "./drizzle" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "the-points-league", "database_id": "de8b3da3-f5ce-43d5-8d22-c2c3268861f0", "migrations_dir": "./drizzle" }],
   "triggers": { "crons": ["*/15 * * * *"] }
 }
