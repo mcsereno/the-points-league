@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1785368048341,
+      "tag": "0000_mysterious_wong",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1785368463590,
+      "tag": "0001_mushy_namora",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1785370187652,
+      "tag": "0002_striped_wendell_vaughn",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1785379261264,
+      "tag": "0003_remarkable_lightspeed",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1785417889844,
+      "tag": "0004_moaning_screwball",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1785419189594,
+      "tag": "0005_eager_mariko_yashida",
+      "breakpoints": true
+    }
+  ]
+}
