@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { isSameOrigin, requireCommissioner } from "../../../lib/portal-auth";
 import { syncLeagueOdds } from "../../../lib/odds-sync";
 import { settleCompletedGames, syncLeagueScores } from "../../../lib/settlement";
@@ -15,5 +16,6 @@ export async function POST(request:Request){
   const settlement=await settleCompletedGames();
   const failed=feedResults.filter(result=>!result.ok);
   await recordAudit("manual_sync","feeds","nfl-cfb",commissioner.member.email,{failed:failed.length,settlement});
-  return Response.json({ok:!failed.length,results:[...feedResults,settlement],message:failed.length?"One or more feeds could not refresh.":"Markets and game results refreshed. Settled tickets are up to date."},{status:failed.length?502:200});
+  const sync=await env.DB.prepare("SELECT league,last_success_at AS lastSuccessAt,credits_remaining AS creditsRemaining,last_error AS lastError FROM odds_sync_state ORDER BY league").all();
+  return Response.json({ok:!failed.length,results:[...feedResults,settlement],sync:sync.results,message:failed.length?"One or more feeds could not refresh.":"Markets and game results refreshed. Settled tickets are up to date."},{status:failed.length?502:200});
 }
