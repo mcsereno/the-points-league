@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { getLeagueSettings } from "./league-settings";
 import { settleCompletedGames, syncLeagueScores } from "./settlement";
+import { alertCommissionerOnce } from "./operations";
 
 type ProviderOutcome = { name: string; description?: string; point?: number; price: number };
 type ProviderMarket = { key: "h2h" | "spreads" | "totals"; outcomes: ProviderOutcome[] };
@@ -133,5 +134,8 @@ export async function runScheduledFeeds(scheduledTime: number) {
   const settlement = await settleCompletedGames();
   if (!isScheduledFeedTime(new Date(scheduledTime))) return [...scores, settlement];
   const odds = await Promise.all([syncLeagueOdds("nfl"), syncLeagueOdds("cfb")]);
+  const failures=[...scores,...odds].filter((item)=>!item.ok&&!item.skipped);
+  const day=new Date(scheduledTime).toISOString().slice(0,10);
+  await Promise.all(failures.map((item)=>alertCommissionerOnce(`automation:${day}:${item.league}:${item.reason}`,`Points League automation issue: ${item.league.toUpperCase()}`,`The scheduled ${item.league.toUpperCase()} feed did not finish.\n\n${item.reason??"No reason was returned."}\n\nOpen the Commissioner dashboard to review the feed status.`)));
   return [...scores, settlement, ...odds];
 }
