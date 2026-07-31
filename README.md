@@ -1,6 +1,6 @@
-# The Points League
+# Gridiron Ledger
 
-Cloudflare Workers version of The Points League with email/password accounts.
+Cloudflare Workers version of Gridiron Ledger with email/password accounts.
 
 Players register with a username, email, and password, then confirm their email. New players are pending until the commissioner approves them; only approved players can wager or see personal home-page performance.
 
