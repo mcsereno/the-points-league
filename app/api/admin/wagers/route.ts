@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { isSameOrigin, requireCommissioner } from "../../../lib/portal-auth";
+import { recordAudit } from "../../../lib/audit";
 
 export async function POST(request: Request) {
   if (!isSameOrigin(request)) {
@@ -56,6 +57,8 @@ export async function POST(request: Request) {
       WHERE id=?
     `).bind(note, wagerId),
   ]);
+
+  await recordAudit("wager_voided","wager",wagerId,commissioner.member.email,{reason,payout:Number(wager.stake)});
 
   return Response.json({ ok: true, status: "void", payout: Number(wager.stake) });
 }
