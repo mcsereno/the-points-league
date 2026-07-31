@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { sendEmail } from "../../../lib/email";
 import { isSameOrigin, requireCommissioner } from "../../../lib/portal-auth";
+import { recordAudit } from "../../../lib/audit";
 
 type Recipient = {
   email: string;
@@ -8,7 +9,7 @@ type Recipient = {
 
 export async function POST(request: Request) {
   if (!isSameOrigin(request)) return Response.json({ error: "Invalid request origin." }, { status: 403 });
-  if (!await requireCommissioner()) return Response.json({ error: "Commissioner access required." }, { status: 403 });
+  const commissioner=await requireCommissioner();if (!commissioner) return Response.json({ error: "Commissioner access required." }, { status: 403 });
 
   const body = await request.json() as { subject?: string; message?: string };
   const subject = body.subject?.trim() ?? "";
@@ -44,6 +45,7 @@ The Points League`,
     else failed.push(recipient.email);
   }
 
+  await recordAudit("league_email_sent","league","approved-members",commissioner.member.email,{subject,recipients:recipients.results.length,sent,failed:failed.length});
   return Response.json({
     ok: failed.length === 0,
     sent,
