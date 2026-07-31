@@ -260,9 +260,9 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
   return (
     <main>
       <header className="site-header shell">
-        <a className="brand" href="#" aria-label="The Points League home">
-          <span className="brand-dog">PL</span>
-          <span><strong>THE POINTS</strong><small>LEAGUE</small></span>
+        <a className="brand" href="#" aria-label="Gridiron Ledger home">
+          <span className="brand-mark">GL</span>
+          <span><strong>GRIDIRON</strong><small>LEDGER</small></span>
         </a>
         <nav aria-label="Main navigation">
           <a href="#board">Wager board</a>
@@ -452,7 +452,7 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
         <a className="button button-dark" href={signedIn ? "/portal" : signInPath}>{signedIn ? "Open my portal" : "Enter the pool"} <span>↗</span></a>
       </section>
 
-      <footer className="footer shell"><span>THE POINTS LEAGUE © 2026</span><nav><a href="/rules">Rules</a><a href="#board">Wager board</a><a href="#standings">Standings</a></nav></footer>
+      <footer className="footer shell"><span>GRIDIRON LEDGER © 2026</span><nav><a href="/rules">Rules</a><a href="#board">Wager board</a><a href="#standings">Standings</a></nav></footer>
     </main>
   );
 }
