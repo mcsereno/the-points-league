@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">Gridiron Ledger</title>
+  <desc id="desc">Gridiron Ledger, Office Football Pool</desc>
+  <rect width="1200" height="630" fill="#07172f"/>
+  <g stroke="#1778ff" stroke-width="2" opacity=".65">
+    <path d="M32 32h1136v566H32z" fill="none"/>
+    <path d="M32 127h760M32 503h760M840 32v566M32 442h1136"/>
+  </g>
+  <g fill="#fff" font-family="Arial, sans-serif" font-weight="800">
+    <text x="82" y="239" font-size="122" letter-spacing="-7">GRIDIRON</text>
+    <text x="82" y="373" fill="#1778ff" font-size="138" letter-spacing="-9">LEDGER</text>
+    <text x="86" y="450" font-size="31" letter-spacing="9">OFFICE FOOTBALL POOL</text>
+    <text x="86" y="544" fill="#70adff" font-size="22" letter-spacing="5">NFL + COLLEGE FOOTBALL • VIRTUAL POINTS</text>
+  </g>
+  <g transform="translate(892 104)">
+    <rect width="220" height="220" rx="18" fill="none" stroke="#1778ff" stroke-width="9"/>
+    <text x="29" y="130" fill="#fff" font-family="Arial, sans-serif" font-size="104" font-weight="800" letter-spacing="-13">GL</text>
+    <path d="M39 170c35-55 107-55 142 0" fill="none" stroke="#1778ff" stroke-width="20" stroke-linecap="round"/>
+    <path d="M75 171h71M99 158v26M112 154v32M125 158v26" stroke="#07172f" stroke-width="6"/>
+  </g>
+  <g fill="#1778ff" font-family="Arial, sans-serif" font-weight="700">
+    <text x="878" y="494" font-size="38">+7.5</text>
+    <text x="1005" y="494" font-size="38">-110</text>
+    <text x="1112" y="494" font-size="38">54.5</text>
+  </g>
+</svg>
