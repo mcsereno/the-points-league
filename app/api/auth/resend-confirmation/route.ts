@@ -1,0 +1,2 @@
+import { isSameOrigin,resendSignupConfirmation } from "../../../lib/auth";
+export async function POST(request:Request){if(!isSameOrigin(request))return Response.json({error:"Invalid request origin."},{status:403});const body=await request.json() as {email?:string};const email=body.email?.trim().toLowerCase()??"";if(!email)return Response.json({error:"Enter your email address."},{status:400});try{await resendSignupConfirmation(email);return Response.json({ok:true});}catch{return Response.json({ok:true});}}
