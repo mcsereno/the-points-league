@@ -135,6 +135,6 @@ export async function runScheduledFeeds(scheduledTime: number) {
   const odds=isScheduledFeedTime(new Date(scheduledTime))?await Promise.all([syncLeagueOdds("nfl"), syncLeagueOdds("cfb")]):[];
   const failures=[...scores,...odds].filter((item)=>!item.ok&&!item.skipped);
   const day=new Date(scheduledTime).toISOString().slice(0,10);
-  await Promise.all(failures.map((item)=>alertCommissionerOnce(`automation:${day}:${item.league}:${item.reason}`,`Points League automation issue: ${item.league.toUpperCase()}`,`The scheduled ${item.league.toUpperCase()} feed did not finish.\n\n${item.reason??"No reason was returned."}\n\nOpen the Commissioner dashboard to review the feed status.`)));
+  await Promise.all(failures.map((item)=>alertCommissionerOnce(`automation:${day}:${item.league}:${item.reason}`,`Gridiron Ledger automation issue: ${item.league.toUpperCase()}`,`The scheduled ${item.league.toUpperCase()} feed did not finish.\n\n${item.reason??"No reason was returned."}\n\nOpen the Commissioner dashboard to review the feed status.`)));
   return [...scores, settlement, ...odds];
 }
