@@ -80,9 +80,9 @@ export default async function RulesPage() {
 
   return <main>
     <header className="site-header shell">
-      <Link className="brand" href="/" aria-label="The Points League home">
-        <span className="brand-dog">PL</span>
-        <span><strong>THE POINTS</strong><small>LEAGUE</small></span>
+      <Link className="brand" href="/" aria-label="Gridiron Ledger home">
+        <span className="brand-mark">GL</span>
+        <span><strong>GRIDIRON</strong><small>LEDGER</small></span>
       </Link>
       <nav aria-label="Rules navigation"><Link href="/#board">Wager board</Link><Link href="/#standings">Standings</Link><Link href="/action">League action</Link><Link href="/portal">My portal</Link></nav>
       <div className="header-actions"><span className="season-label">{settings.seasonLabel.toUpperCase()}</span><Link className="button button-small" href="/#board">Make picks <span>↗</span></Link></div>
@@ -100,6 +100,6 @@ export default async function RulesPage() {
         </article>)}
       </div>
     </section>
-    <footer className="footer shell"><span>THE POINTS LEAGUE © 2026</span><nav><Link href="/">Home</Link><Link href="/#board">Wager board</Link><Link href="/portal">My portal</Link></nav></footer>
+    <footer className="footer shell"><span>GRIDIRON LEDGER © 2026</span><nav><Link href="/">Home</Link><Link href="/#board">Wager board</Link><Link href="/portal">My portal</Link></nav></footer>
   </main>;
 }
