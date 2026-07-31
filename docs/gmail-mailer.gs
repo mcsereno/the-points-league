@@ -1,5 +1,5 @@
 /**
- * The Points League Gmail mailer.
+ * Gridiron Ledger Gmail mailer.
  *
  * Deploy as a Google Apps Script web app that executes as your Gmail account.
  * Set POINTS_LEAGUE_TOKEN in Project Settings > Script properties before deploy.
@@ -16,7 +16,7 @@ function doPost(e) {
       return json({ ok: false, error: 'Missing email fields' });
     }
 
-    GmailApp.sendEmail(message.to, message.subject, message.text, { name: 'The Points League' });
+    GmailApp.sendEmail(message.to, message.subject, message.text, { name: 'Gridiron Ledger' });
     return json({ ok: true });
   } catch (error) {
     console.error(error);
