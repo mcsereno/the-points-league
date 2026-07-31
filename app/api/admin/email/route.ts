@@ -39,7 +39,7 @@ export async function POST(request: Request) {
       subject,
       text: `${message}
 
-The Points League`,
+Gridiron Ledger`,
     });
     if (result.sent) sent += 1;
     else failed.push(recipient.email);
