@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { LeagueSettings, leagueWeekWindow } from "./lib/league-config";
+import { LeagueSettings } from "./lib/league-config";
 import { isApprovedMember } from "./lib/member-access";
 
 type Sport = "ALL" | "NFL" | "CFB";
@@ -22,13 +22,15 @@ type BoardGame = {
   id: string; sport: "NFL" | "CFB"; day: string; time: string; network: string;
   away: string; awayRecord: string; home: string; homeRecord: string;
   spreadAway: string; spreadAwayOdds: number; spreadHome: string; spreadHomeOdds: number;
-  mlAway: number; mlHome: number; total: string; totalOverOdds: number; totalUnderOdds: number; isSample: boolean;
+  mlAway: number; mlHome: number; total: string; totalOverOdds: number; totalUnderOdds: number;
   availableMarkets: Market[];
   outcomeIds: Record<Market, { away: string; home: string }>;
 };
 
 type LiveOutcome = { id: string; market: "spread" | "moneyline" | "total"; side: string; line: number | null; price: number };
 type LiveGame = { id: string; league: "nfl" | "cfb"; awayTeam: string; homeTeam: string; kickoffAt: string; oddsProvider?: string; oddsCapturedAt?: string; outcomes: LiveOutcome[] };
+type BoardWeek = { key: string; label: string; start: string; end: string; isCurrent: boolean };
+type OddsPayload = { games?: LiveGame[]; feedConfigured?: boolean; week?: BoardWeek; weeks?: BoardWeek[] };
 type MemberSnapshot = {
   displayName: string; status: string; role: string; balance?: number;
   equity?: number; openStake?: number; startingBalance?: number; rebuyCount?: number; rank?: number | null;
@@ -41,37 +43,6 @@ type PortalSnapshot = {
   member?: MemberSnapshot;
   standings: Standing[];
 };
-
-const sampleGames: BoardGame[] = [
-  {
-    id: "buf-nyj", sport: "NFL", day: "THU", time: "7:15 PM", network: "PRIME",
-    away: "Buffalo", awayRecord: "4–1", home: "New York J", homeRecord: "2–3",
-    spreadAway: "-3.5", spreadAwayOdds: -110, spreadHome: "+3.5", spreadHomeOdds: -110,
-    mlAway: -185, mlHome: 155, total: "44.5", totalOverOdds: -110, totalUnderOdds: -110, isSample: true, availableMarkets: ["Spread", "Moneyline", "Total"],
-    outcomeIds: { Spread: { away: "sample-buf-spread", home: "sample-nyj-spread" }, Moneyline: { away: "sample-buf-ml", home: "sample-nyj-ml" }, Total: { away: "sample-buf-over", home: "sample-nyj-under" } },
-  },
-  {
-    id: "det-dal", sport: "NFL", day: "SUN", time: "3:25 PM", network: "FOX",
-    away: "Detroit", awayRecord: "5–0", home: "Dallas", homeRecord: "3–2",
-    spreadAway: "-2.5", spreadAwayOdds: -115, spreadHome: "+2.5", spreadHomeOdds: -105,
-    mlAway: -145, mlHome: 125, total: "51.5", totalOverOdds: -108, totalUnderOdds: -112, isSample: true, availableMarkets: ["Spread", "Moneyline", "Total"],
-    outcomeIds: { Spread: { away: "sample-det-spread", home: "sample-dal-spread" }, Moneyline: { away: "sample-det-ml", home: "sample-dal-ml" }, Total: { away: "sample-det-over", home: "sample-dal-under" } },
-  },
-  {
-    id: "tex-okla", sport: "CFB", day: "SAT", time: "11:00 AM", network: "ABC",
-    away: "Texas", awayRecord: "5–0", home: "Oklahoma", homeRecord: "4–1",
-    spreadAway: "-7.5", spreadAwayOdds: -110, spreadHome: "+7.5", spreadHomeOdds: -110,
-    mlAway: -310, mlHome: 245, total: "55.5", totalOverOdds: -105, totalUnderOdds: -115, isSample: true, availableMarkets: ["Spread", "Moneyline", "Total"],
-    outcomeIds: { Spread: { away: "sample-tex-spread", home: "sample-okla-spread" }, Moneyline: { away: "sample-tex-ml", home: "sample-okla-ml" }, Total: { away: "sample-tex-over", home: "sample-okla-under" } },
-  },
-  {
-    id: "ore-psu", sport: "CFB", day: "SAT", time: "6:30 PM", network: "NBC",
-    away: "Oregon", awayRecord: "5–0", home: "Penn State", homeRecord: "5–0",
-    spreadAway: "-1.5", spreadAwayOdds: -110, spreadHome: "+1.5", spreadHomeOdds: -110,
-    mlAway: -120, mlHome: 100, total: "48.5", totalOverOdds: -110, totalUnderOdds: -110, isSample: true, availableMarkets: ["Spread", "Moneyline", "Total"],
-    outcomeIds: { Spread: { away: "sample-ore-spread", home: "sample-psu-spread" }, Moneyline: { away: "sample-ore-ml", home: "sample-psu-ml" }, Total: { away: "sample-ore-over", home: "sample-psu-under" } },
-  },
-];
 
 function formatOdds(odds: number) {
   return odds > 0 ? `+${odds}` : `${odds}`;
@@ -114,17 +85,25 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
   const [teaserPoints, setTeaserPoints] = useState(settings.teaserPoints);
   const [stake, setStake] = useState(100);
   const [notice, setNotice] = useState("");
-  const [boardGames, setBoardGames] = useState<BoardGame[]>(sampleGames);
+  const [boardGames, setBoardGames] = useState<BoardGame[]>([]);
   const [feedLabel, setFeedLabel] = useState("CONNECTING LIVE LINES");
+  const [weekOptions, setWeekOptions] = useState<BoardWeek[]>([]);
+  const [boardWeek, setBoardWeek] = useState<BoardWeek | null>(null);
+  const [selectedWeekKey, setSelectedWeekKey] = useState<string | null>(null);
   const [portal, setPortal] = useState<PortalSnapshot | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     let active = true;
-    const refreshBoard = () => fetch("/api/odds")
+    const refreshBoard = () => {
+      const query = selectedWeekKey ? `?week=${encodeURIComponent(selectedWeekKey)}` : "";
+      return fetch(`/api/odds${query}`)
       .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((payload: { games?: LiveGame[]; feedConfigured?: boolean }) => {
+      .then((payload: OddsPayload) => {
         if (!active) return;
+        setWeekOptions(payload.weeks ?? []);
+        setBoardWeek(payload.week ?? null);
+        if (!selectedWeekKey && payload.week?.key) setSelectedWeekKey(payload.week.key);
         const normalized = (payload.games ?? []).map((game): BoardGame | null => {
           const spreadAway = game.outcomes.find((item) => item.market === "spread" && item.side === "away");
           const spreadHome = game.outcomes.find((item) => item.market === "spread" && item.side === "home");
@@ -154,7 +133,6 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
             total: `${over?.line ?? under?.line ?? "—"}`,
             totalOverOdds: over?.price ?? 0,
             totalUnderOdds: under?.price ?? 0,
-            isSample: false,
             availableMarkets,
             outcomeIds: {
               Spread: { away: spreadAway?.id ?? "", home: spreadHome?.id ?? "" },
@@ -163,13 +141,13 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
             },
           };
         }).filter((game): game is BoardGame => game !== null);
-        if (normalized.length) {
+        setBoardGames(normalized);
+        if (normalized.length && payload.week?.isCurrent) {
           const latestCapturedAt = (payload.games ?? [])
             .map((game) => game.oddsCapturedAt)
             .filter((value): value is string => Boolean(value))
             .sort()
             .at(-1);
-          setBoardGames(normalized);
           setTicket((current) => {
             const liveLines = new Map((payload.games ?? []).flatMap((game) => game.outcomes.map((outcome) => [outcome.id, outcome])));
             const changed = current.some((selection) => {
@@ -183,9 +161,18 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
             ? ` · UPDATED ${new Date(latestCapturedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`
             : "";
           setFeedLabel(`LIVE ${normalized[0]?.network ?? ""} LINES${capturedLabel}`);
-        } else setFeedLabel(payload.feedConfigured ? "LIVE FEED INITIALIZING" : "SAMPLE LINES");
+        } else {
+          setTicket([]);
+          setFeedLabel(payload.feedConfigured ? "NO LINES POSTED" : "LINE FEED NOT CONFIGURED");
+        }
       })
-      .catch(() => setFeedLabel("SAMPLE LINES"));
+      .catch(() => {
+        if (!active) return;
+        setBoardGames([]);
+        setTicket([]);
+        setFeedLabel("LINE FEED UNAVAILABLE");
+      });
+    };
 
     void refreshBoard();
     const timer = window.setInterval(refreshBoard, 5 * 60_000);
@@ -193,7 +180,7 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
       active = false;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [selectedWeekKey]);
 
   useEffect(() => {
     fetch("/api/me")
@@ -215,6 +202,10 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
     : ticket.length >= (betType === "Parlay" ? settings.parlayMinLegs : settings.teaserMinLegs);
 
   const select = (selection: Selection) => {
+    if (!boardWeek?.isCurrent) {
+      setNotice("This board is view-only. Wagering opens during the current league week.");
+      return;
+    }
     setTicket((current) => {
       if (betType === "Single") return [selection];
       if (current.some((leg) => leg.id === selection.id)) return current.filter((leg) => leg.id !== selection.id);
@@ -234,16 +225,16 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
 
   const placeWager = async () => {
     if (!minimumLegsMet || stake <= 0 || !ticketOdds) return;
+    if (!boardWeek?.isCurrent) {
+      setNotice("This board is view-only. Wagering opens during the current league week.");
+      return;
+    }
     if (!portal?.authenticated) {
       window.location.href = portal?.signInPath ?? "/login?returnTo=%2F";
       return;
     }
     if (portal.member?.status !== "approved") {
       setNotice("Your membership is awaiting commissioner approval.");
-      return;
-    }
-    if (ticket.some((leg) => leg.id.startsWith("sample-"))) {
-      setNotice("Sample lines are for demonstration only. Wagering opens when the live board loads.");
       return;
     }
     setSubmitting(true);
@@ -280,10 +271,10 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
   const signedIn = Boolean(portal?.authenticated && member);
   const approvedMember = signedIn && isApprovedMember(member);
   const signInPath = portal?.signInPath ?? "/login?returnTo=%2F";
-  const ticketHasSamples = ticket.some((leg) => leg.id.startsWith("sample-"));
-  const placeDisabled = stake <= 0 || !minimumLegsMet || !ticketOdds || submitting || (signedIn && member?.status !== "approved") || ticketHasSamples;
-  const week = leagueWeekWindow();
-  const weekLabel = `${week.start.toLocaleDateString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric" })}–${new Date(week.end.getTime() - 1).toLocaleDateString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric" })}`.toUpperCase();
+  const selectedWeekIsCurrent = boardWeek?.isCurrent ?? true;
+  const showWagerSlip = signedIn && selectedWeekIsCurrent;
+  const placeDisabled = stake <= 0 || !minimumLegsMet || !ticketOdds || submitting || !selectedWeekIsCurrent || (signedIn && member?.status !== "approved");
+  const weekLabel = boardWeek?.label ?? "LOADING WEEK";
 
   return (
     <main>
@@ -326,11 +317,14 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
       <section className="board-band" id="board">
         <div className="shell">
           <div className="section-heading board-heading">
-            <div><p className="eyebrow">CURRENT LEAGUE WEEK · {weekLabel}</p><h2>This week&apos;s board.</h2></div>
+            <div>
+              <p className="eyebrow">{selectedWeekIsCurrent ? "CURRENT LEAGUE WEEK" : "VIEWING LEAGUE WEEK"} · {weekLabel}</p>
+              <h2>{selectedWeekIsCurrent ? "This week's board." : "Week board."}</h2>
+            </div>
             <div className="feed-label"><span className="live-dot" /> {feedLabel}</div>
           </div>
 
-          <div className={`pool-layout${signedIn ? "" : " pool-layout-signed-out"}`}>
+          <div className={`pool-layout${showWagerSlip ? "" : " pool-layout-signed-out"}`}>
             <div>
               <div className="board-controls">
                 <div className="segmented" aria-label="Filter by league">
@@ -338,6 +332,22 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
                     <button className={sport === item ? "active" : ""} key={item} onClick={() => setSport(item)}>{item}</button>
                   ))}
                 </div>
+                <label className="week-picker">
+                  <span>VIEW WEEK</span>
+                  <select
+                    aria-label="Select league week"
+                    disabled={!weekOptions.length}
+                    value={selectedWeekKey ?? ""}
+                    onChange={(event) => {
+                      setSelectedWeekKey(event.target.value);
+                      setTicket([]);
+                      setNotice("");
+                    }}
+                  >
+                    {!weekOptions.length && <option value="">Loading weeks</option>}
+                    {weekOptions.map((week) => <option key={week.key} value={week.key}>{week.label}{week.isCurrent ? " · Current" : ""}</option>)}
+                  </select>
+                </label>
                 <div className="segmented market-tabs" aria-label="Choose market">
                   {(["Spread", "Moneyline", "Total"] as Market[]).map((item) => (
                     <button disabled={betType === "Teaser" && item === "Moneyline"} className={market === item ? "active" : ""} key={item} onClick={() => setMarket(item)}>{item}</button>
@@ -346,7 +356,7 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
               </div>
 
               <div className="sportsbook">
-                {visibleGames.map((game) => (
+                {visibleGames.length ? visibleGames.map((game) => (
                   <article className="market-game" key={game.id}>
                     <div className="game-meta">
                       <span className={`league-pill league-pill-${game.sport.toLowerCase()}`}>{game.sport}</span>
@@ -376,7 +386,7 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
                         return (
                           <div className="team-line" key={side}>
                             <div className="team-name"><strong>{team}</strong><span>{record}</span></div>
-                            <button className={selected ? "selected" : ""} onClick={() => select({ id, gameId: game.id, game: `${game.away} @ ${game.home}`, pick, odds, market, line, direction: market === "Total" ? (isAway ? "over" : "under") : "team" })}>
+                            <button disabled={!selectedWeekIsCurrent} title={selectedWeekIsCurrent ? undefined : "This week is view-only."} className={selected ? "selected" : ""} onClick={() => select({ id, gameId: game.id, game: `${game.away} @ ${game.home}`, pick, odds, market, line, direction: market === "Total" ? (isAway ? "over" : "under") : "team" })}>
                               <b>{market === "Spread" ? (isAway ? game.spreadAway : game.spreadHome) : market === "Moneyline" ? "ML" : isAway ? `O ${game.total}` : `U ${game.total}`}</b>
                               <span>{formatOdds(odds)}</span>
                             </button>
@@ -385,11 +395,16 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
                       })}
                     </div>
                   </article>
-                ))}
+                )) : (
+                  <div className="board-empty">
+                    <strong>{selectedWeekIsCurrent ? "No live lines are available yet." : "No lines have been posted for this week."}</strong>
+                    <p>{selectedWeekIsCurrent ? "The board updates after the next scheduled feed or commissioner refresh." : "This board is view-only. Future weeks fill as sportsbooks publish lines."}</p>
+                  </div>
+                )}
               </div>
             </div>
 
-            {signedIn && <aside className="bet-slip" aria-label="Wager slip">
+            {showWagerSlip && <aside className="bet-slip" aria-label="Wager slip">
               <div className="slip-title"><span>WAGER SLIP</span><b>{ticket.length}</b></div>
               <div className="bet-type-tabs" aria-label="Wager type">
                 {(["Single", "Parlay", "Teaser"] as BetType[]).map((item) => (
@@ -423,7 +438,7 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
                   <div className="slip-totals"><span>{betType} price</span><strong>{ticketOdds ? formatOdds(ticketOdds) : "—"}</strong></div>
                   <div className="slip-totals"><span>Potential return</span><strong>{minimumLegsMet ? returnValue.toLocaleString() : "—"} PTS</strong></div>
                   <button className="place-wager" disabled={placeDisabled} onClick={placeWager}>
-                    {submitting ? "Placing wager" : ticketHasSamples ? "Live board required" : !signedIn ? "Sign in to wager" : member?.status !== "approved" ? "Approval pending" : `Place ${betType.toLowerCase()}`} <span>↗</span>
+                    {submitting ? "Placing wager" : member?.status !== "approved" ? "Approval pending" : `Place ${betType.toLowerCase()}`} <span>↗</span>
                   </button>
                   {betType === "Teaser" && <p className="pricing-note">{settings.teaserPoints}-point teaser pricing is fixed for {settings.teaserMinLegs}–{settings.teaserMaxLegs} legs.</p>}
                 </>
@@ -440,7 +455,7 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
               </div>
             </aside>}
           </div>
-          <p className="board-note">Lines come from DraftKings, with FanDuel used when a DraftKings market is missing. Sample games appear only while live lines are unavailable.</p>
+          <p className="board-note">DraftKings is the source. FanDuel fills a market only when DraftKings does not have one. Weeks outside the current league week are view-only.</p>
         </div>
       </section>
 
