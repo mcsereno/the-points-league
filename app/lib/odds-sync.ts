@@ -1,5 +1,4 @@
 import { env } from "cloudflare:workers";
-import { leagueWeekWindow } from "./league-config";
 import { alertCommissionerOnce } from "./operations";
 import { settleCompletedGames, syncLeagueScores } from "./settlement";
 
@@ -23,6 +22,7 @@ type SelectedMarket = { market: MarketName; provider: string; outcomes: Selected
 const MINIMUM_INTERVAL_MINUTES = 15;
 const RUNDOWN_AFFILIATE_IDS = { draftkings: "19", fanduel: "23" } as const;
 const RUNDOWN_REQUEST_INTERVAL_MS = 1_050;
+const FUTURE_ODDS_WINDOW_DAYS = 10;
 let nextRundownRequestAt = 0;
 
 function quotaValue(value: string | null) {
@@ -96,11 +96,9 @@ function centralDateSerial(date: Date) {
 }
 
 function upcomingLeagueDates(now = new Date()) {
-  const week = leagueWeekWindow(now);
-  const start = Math.max(centralDateSerial(now), centralDateSerial(week.start));
-  const end = centralDateSerial(week.end);
+  const start = centralDateSerial(now);
   const dates: string[] = [];
-  for (let cursor = start; cursor < end; cursor += 86_400_000) {
+  for (let cursor = start; cursor < start + FUTURE_ODDS_WINDOW_DAYS * 86_400_000; cursor += 86_400_000) {
     dates.push(new Date(cursor).toISOString().slice(0, 10));
   }
   return dates;
