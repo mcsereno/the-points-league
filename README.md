@@ -14,4 +14,4 @@ Players register with a username, email, and password, then confirm their email.
 
 ## Live odds
 
-Gridiron Ledger uses The Odds API v4 for NFL and NCAAF full-game moneylines, spreads, and totals. Add the production key as the `ODDS_API_KEY` Cloudflare secret. DraftKings is primary and FanDuel automatically fills a missing market.
+Gridiron Ledger uses TheRundown API v2 for NFL and NCAAF full-game moneylines, spreads, and totals. Add the free-plan key as the `RUNDOWN_API_KEY` Cloudflare secret. DraftKings is primary and FanDuel automatically fills a missing market. TheRundown free-plan odds are pre-match and delayed by five minutes; score settlement uses ESPN's public scoreboard feed and does not consume odds data points.
