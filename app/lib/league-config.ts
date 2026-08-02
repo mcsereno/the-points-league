@@ -191,26 +191,97 @@ function centralMidnightUtc(year: number, month: number, day: number) {
   return new Date(guess);
 }
 
-export function leagueWeekWindow(now = new Date()) {
-  const local = centralCalendarParts(now);
-  const daysSinceTuesday = (local.weekday - 2 + 7) % 7;
-  const startCalendar = new Date(Date.UTC(local.year, local.month - 1, local.day - daysSinceTuesday));
-  const endCalendar = new Date(Date.UTC(
-    startCalendar.getUTCFullYear(),
-    startCalendar.getUTCMonth(),
-    startCalendar.getUTCDate() + 7,
-  ));
-  const start = centralMidnightUtc(
-    startCalendar.getUTCFullYear(),
-    startCalendar.getUTCMonth() + 1,
-    startCalendar.getUTCDate(),
-  );
+export type LeagueWeek = {
+  key: string;
+  label: string;
+  start: Date;
+  end: Date;
+};
+
+function leagueWeekFromCalendarStart(year: number, month: number, day: number) {
+  const start = centralMidnightUtc(year, month, day);
+  const endCalendar = new Date(Date.UTC(year, month - 1, day + 7));
   const end = centralMidnightUtc(
     endCalendar.getUTCFullYear(),
     endCalendar.getUTCMonth() + 1,
     endCalendar.getUTCDate(),
   );
   return { start, end };
+}
+
+function centralDateKey(date: Date) {
+  const { year, month, day } = centralCalendarParts(date);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function formatLeagueWeekLabel({ start, end }: { start: Date; end: Date }) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    month: "short",
+    day: "numeric",
+  });
+  const startParts = formatter.formatToParts(start);
+  const endParts = formatter.formatToParts(new Date(end.getTime() - 1));
+  const value = (parts: Intl.DateTimeFormatPart[], type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  const startMonth = value(startParts, "month");
+  const startDay = value(startParts, "day");
+  const endMonth = value(endParts, "month");
+  const endDay = value(endParts, "day");
+  return `${startMonth} ${startDay}–${startMonth === endMonth ? "" : `${endMonth} `}${endDay}`.toUpperCase();
+}
+
+export function leagueWeekWindow(now = new Date()) {
+  const local = centralCalendarParts(now);
+  const daysSinceTuesday = (local.weekday - 2 + 7) % 7;
+  const startCalendar = new Date(Date.UTC(local.year, local.month - 1, local.day - daysSinceTuesday));
+  return leagueWeekFromCalendarStart(
+    startCalendar.getUTCFullYear(),
+    startCalendar.getUTCMonth() + 1,
+    startCalendar.getUTCDate(),
+  );
+}
+
+export function leagueWeekKey(week: { start: Date }) {
+  return centralDateKey(week.start);
+}
+
+export function leagueWeekWindowForStart(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const [year, month, day] = match.slice(1).map(Number);
+  if (!year || !month || !day) return null;
+  const calendar = new Date(Date.UTC(year, month - 1, day));
+  if (
+    calendar.getUTCFullYear() !== year
+    || calendar.getUTCMonth() !== month - 1
+    || calendar.getUTCDate() !== day
+    || calendar.getUTCDay() !== 2
+  ) return null;
+  return leagueWeekFromCalendarStart(year, month, day);
+}
+
+export function leagueSeasonWeeks(seasonId: string): LeagueWeek[] {
+  const seasonYear = Number(seasonId);
+  if (!Number.isInteger(seasonYear) || seasonYear < 2000 || seasonYear > 3000) return [];
+
+  const augustFirst = new Date(Date.UTC(seasonYear, 7, 1));
+  const firstStart = new Date(Date.UTC(
+    seasonYear,
+    7,
+    1 - ((augustFirst.getUTCDay() - 2 + 7) % 7),
+  ));
+  const finalExclusive = Date.UTC(seasonYear + 1, 2, 1);
+  const weeks: LeagueWeek[] = [];
+  for (let cursor = firstStart.getTime(); cursor < finalExclusive; cursor += 7 * 86_400_000) {
+    const startCalendar = new Date(cursor);
+    const window = leagueWeekFromCalendarStart(
+      startCalendar.getUTCFullYear(),
+      startCalendar.getUTCMonth() + 1,
+      startCalendar.getUTCDate(),
+    );
+    weeks.push({ key: leagueWeekKey(window), label: formatLeagueWeekLabel(window), ...window });
+  }
+  return weeks;
 }
 
 export function validateLeagueSettings(value: unknown): LeagueSettings {
