@@ -13,7 +13,8 @@ export async function GET(request: Request) {
   const settings = await getLeagueSettings();
   const week = leagueWeekWindow();
   let games = await loadGames(league, week.start.toISOString(), week.end.toISOString());
-  const feedConfigured = Boolean((env as unknown as Record<string, string | undefined>).ODDS_API_KEY);
+  const values = env as unknown as Record<string, string | undefined>;
+  const feedConfigured = Boolean(values.THERUNDOWN_API_KEY ?? values.ODDS_API_KEY);
   if (!games.results.length && feedConfigured) {
     if (league === "nfl" || league === "cfb") await syncLeagueOdds(league);
     else await Promise.all([syncLeagueOdds("nfl"), syncLeagueOdds("cfb")]);
