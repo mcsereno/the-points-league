@@ -11,3 +11,7 @@ Players register with a username, email, and password, then confirm their email.
 3. Deploy `docs/gmail-mailer.gs` as a Google Apps Script web app, then set its URL and token in the variables listed in `.dev.vars.example`. This sends registration and approval emails from the same Gmail account.
 4. Create the Cloudflare D1 database, replace the placeholder ID in `wrangler.jsonc`, apply migrations, and set the variables listed in `.dev.vars.example`.
 5. `SITE_OWNER_EMAIL` becomes the commissioner after its first verified sign-in.
+
+## Live odds
+
+Gridiron Ledger uses TheRundown API for NFL and NCAAF full-game moneylines, spreads, and totals. Add your existing Dog League key as the `THERUNDOWN_API_KEY` production secret in Cloudflare. DraftKings is primary and FanDuel automatically fills a missing market.
