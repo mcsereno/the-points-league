@@ -14,4 +14,4 @@ Players register with a username, email, and password, then confirm their email.
 
 ## Live odds
 
-Gridiron Ledger uses TheRundown API for NFL and NCAAF full-game moneylines, spreads, and totals. Add your existing Dog League key as the `THERUNDOWN_API_KEY` production secret in Cloudflare. DraftKings is primary and FanDuel automatically fills a missing market.
+Gridiron Ledger uses The Odds API v4 for NFL and NCAAF full-game moneylines, spreads, and totals. Add the production key as the `ODDS_API_KEY` Cloudflare secret. DraftKings is primary and FanDuel automatically fills a missing market.
