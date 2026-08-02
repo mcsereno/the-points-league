@@ -12,10 +12,13 @@ export async function GET(request: Request) {
   const settings = await getLeagueSettings();
   const week = leagueWeekWindow();
   let games = await loadGames(league, week.start.toISOString(), week.end.toISOString());
-  const feedConfigured = Boolean((env as unknown as Record<string, string | undefined>).ODDS_API_KEY);
+  const feedConfigured = Boolean((env as unknown as Record<string, string | undefined>).RUNDOWN_API_KEY);
   if (!games.results.length && feedConfigured) {
     if (league === "nfl" || league === "cfb") await syncLeagueOdds(league);
-    else await Promise.all([syncLeagueOdds("nfl"), syncLeagueOdds("cfb")]);
+    else {
+      await syncLeagueOdds("nfl");
+      await syncLeagueOdds("cfb");
+    }
     games = await loadGames(league, week.start.toISOString(), week.end.toISOString());
   }
   const results = [];
