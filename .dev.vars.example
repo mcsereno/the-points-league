@@ -4,5 +4,6 @@ GMAIL_SCRIPT_URL=https://script.google.com/macros/s/replace-me/exec
 GMAIL_SCRIPT_TOKEN=generate-a-long-random-secret
 SITE_OWNER_EMAIL=commissioner@example.com
 SITE_PUBLIC_URL=https://points.example.com
-THERUNDOWN_API_KEY=replace_me
+ODDS_API_KEY=replace_me
+ODDS_BOOKMAKER=draftkings
 ODDS_BOOKMAKER=draftkings
