@@ -2,78 +2,123 @@ import { env } from "cloudflare:workers";
 import { getLeagueSettings } from "./league-settings";
 import { settleCompletedGames, syncLeagueScores } from "./settlement";
 import { alertCommissionerOnce } from "./operations";
-import { dayOffset, getRundownEvents, type League, type RundownMarket } from "./rundown";
 
-const PRIMARY_BOOK = "19";
-const BACKUP_BOOK = "23";
-const MARKET_MAP: Record<number, "moneyline" | "spread" | "total"> = { 1: "moneyline", 2: "spread", 3: "total" };
+type ProviderOutcome = { name: string; description?: string; point?: number; price: number };
+type ProviderMarket = { key: "h2h" | "spreads" | "totals"; outcomes: ProviderOutcome[] };
+type ProviderEvent = {
+  id: string;
+  commence_time: string;
+  home_team: string;
+  away_team: string;
+  bookmakers?: { key: string; title: string; markets: ProviderMarket[] }[];
+};
+type ProviderBookmaker = NonNullable<ProviderEvent["bookmakers"]>[number];
 
-async function recordState(league: League, success: boolean, error: string | null) {
-  await env.DB.prepare("INSERT INTO odds_sync_state (league,last_attempt_at,last_success_at,last_error,updated_at) VALUES (?,CURRENT_TIMESTAMP,CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END,?,CURRENT_TIMESTAMP) ON CONFLICT(league) DO UPDATE SET last_attempt_at=CURRENT_TIMESTAMP,last_success_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE last_success_at END,last_error=excluded.last_error,updated_at=CURRENT_TIMESTAMP")
-    .bind(league, success ? 1 : 0, error, success ? 1 : 0).run();
+const QUOTA_RESERVE = 75;
+const MINIMUM_INTERVAL_MINUTES = 15;
+
+function quotaValue(value: string | null) {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+async function recordState(league: "nfl" | "cfb", success: boolean, response: Response | null, error: string | null) {
+  await env.DB.prepare("INSERT INTO odds_sync_state (league,last_attempt_at,last_success_at,credits_remaining,credits_used,last_error,updated_at) VALUES (?,CURRENT_TIMESTAMP,CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(league) DO UPDATE SET last_attempt_at=CURRENT_TIMESTAMP,last_success_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE last_success_at END,credits_remaining=COALESCE(excluded.credits_remaining,credits_remaining),credits_used=COALESCE(excluded.credits_used,credits_used),last_error=excluded.last_error,updated_at=CURRENT_TIMESTAMP")
+    .bind(league, success ? 1 : 0, quotaValue(response?.headers.get("x-requests-remaining") ?? null), quotaValue(response?.headers.get("x-requests-used") ?? null), error, success ? 1 : 0).run();
 }
 
-function outcomeIdentity(eventId: string, market: string, name: string) {
-  return `${eventId}:${market}:${name}`.toLowerCase().replace(/[^a-z0-9:]+/g, "-");
+function outcomeIdentity(eventId: string, market: string, outcome: ProviderOutcome) {
+  return `${eventId}:${market}:${outcome.name}:${outcome.description ?? ""}`.toLowerCase().replace(/[^a-z0-9:]+/g, "-");
 }
 
-function bookFor(market: RundownMarket) {
-  const eligible = market.participants.filter((participant) => participant.lines.some((line) => {
-    const primary = line.prices[PRIMARY_BOOK]?.price;
-    return Number.isFinite(primary) && primary !== 0.0001;
-  }));
-  if (eligible.length === market.participants.length) return PRIMARY_BOOK;
-  const backupEligible = market.participants.filter((participant) => participant.lines.some((line) => {
-    const backup = line.prices[BACKUP_BOOK]?.price;
-    return Number.isFinite(backup) && backup !== 0.0001;
-  }));
-  return backupEligible.length === market.participants.length ? BACKUP_BOOK : null;
+function validMarket(
+  market: ProviderMarket | undefined,
+  event: ProviderEvent,
+) {
+  if (!market) return false;
+  if (market.key === "totals") {
+    const sides = new Set(market.outcomes.map((outcome) => outcome.name.toLowerCase()));
+    return sides.has("over") && sides.has("under");
+  }
+  const teams = new Set(market.outcomes.map((outcome) => outcome.name));
+  return teams.has(event.away_team) && teams.has(event.home_team);
 }
 
-export async function syncLeagueOdds(league: League, force = false) {
+function selectMarket(
+  event: ProviderEvent,
+  key: ProviderMarket["key"],
+  primary: ProviderBookmaker | undefined,
+  backup: ProviderBookmaker | undefined,
+) {
+  const primaryMarket = primary?.markets.find((market) => market.key === key);
+  if (validMarket(primaryMarket, event)) return { market: primaryMarket!, bookmaker: primary! };
+  const backupMarket = backup?.markets.find((market) => market.key === key);
+  if (validMarket(backupMarket, event)) return { market: backupMarket!, bookmaker: backup! };
+  return null;
+}
+
+export async function syncLeagueOdds(league: "nfl" | "cfb", force = false) {
+  const values = env as unknown as Record<string, string | undefined>;
+  const apiKey = values.ODDS_API_KEY;
   const settings = await getLeagueSettings();
-  const source = await getRundownEvents(league, Array.from({ length: 11 }, (_, index) => dayOffset(index)), true);
-  if (!source.ok) {
-    await recordState(league, false, source.reason);
-    return source;
+  const bookmakerKeys = [settings.primarySportsbook, settings.backupSportsbook];
+  if (!apiKey) return { league, ok: false, skipped: true, reason: "ODDS_API_KEY is not configured." };
+
+  const state = await env.DB.prepare("SELECT last_attempt_at AS lastAttemptAt,credits_remaining AS remaining FROM odds_sync_state WHERE league=?").bind(league).first<{ lastAttemptAt: string | null; remaining: number | null }>();
+  if (!force && state?.remaining != null && state.remaining <= QUOTA_RESERVE) return { league, ok: true, skipped: true, reason: `Quota reserve active (${state.remaining} remaining).` };
+  if (!force && state?.lastAttemptAt && Date.now() - new Date(state.lastAttemptAt).getTime() < MINIMUM_INTERVAL_MINUTES * 60_000) return { league, ok: true, skipped: true, reason: "A recent refresh already ran." };
+
+  const sport = league === "nfl" ? "americanfootball_nfl" : "americanfootball_ncaaf";
+  const url = new URL(`https://api.the-odds-api.com/v4/sports/${sport}/odds/`);
+  url.searchParams.set("apiKey", apiKey);
+  url.searchParams.set("bookmakers", bookmakerKeys.join(","));
+  url.searchParams.set("markets", "h2h,spreads,totals");
+  url.searchParams.set("oddsFormat", "american");
+
+  let response: Response;
+  try {
+    response = await fetch(url, { headers: { accept: "application/json" } });
+  } catch {
+    await recordState(league, false, null, "Odds service unavailable.");
+    return { league, ok: false, skipped: false, reason: "Odds service unavailable." };
+  }
+  if (!response.ok) {
+    const reason = `Odds request failed (${response.status}).`;
+    await recordState(league, false, response, reason);
+    return { league, ok: false, skipped: false, reason };
   }
 
-  for (const event of source.events) {
-    const away = event.teams.find((team) => team.is_away)?.name;
-    const home = event.teams.find((team) => team.is_home)?.name;
-    if (!away || !home) continue;
+  const events = await response.json() as ProviderEvent[];
+  for (const event of events) {
+    const primary = event.bookmakers?.find((item) => item.key === settings.primarySportsbook);
+    const backup = event.bookmakers?.find((item) => item.key === settings.backupSportsbook);
+    if (!primary && !backup) continue;
     await env.DB.prepare("INSERT INTO games (id,league,away_team,home_team,kickoff_at,status,odds_provider,odds_captured_at) VALUES (?,?,?,?,?,'scheduled',?,CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET away_team=excluded.away_team,home_team=excluded.home_team,kickoff_at=excluded.kickoff_at,odds_provider=excluded.odds_provider,odds_captured_at=CURRENT_TIMESTAMP")
-      .bind(event.event_id, league, away, home, event.event_date, "DraftKings · FanDuel backup").run();
-
-    for (const market of event.markets ?? []) {
-      const marketName = MARKET_MAP[market.market_id];
-      if (!marketName || market.period_id !== 0) continue;
-      const bookmaker = bookFor(market);
-      if (!bookmaker) {
-        await env.DB.prepare("DELETE FROM outcomes WHERE game_id=? AND market=?").bind(event.event_id, marketName).run();
+      .bind(event.id, league, event.away_team, event.home_team, event.commence_time, "DraftKings · FanDuel backup").run();
+    for (const marketKey of ["h2h", "spreads", "totals"] as ProviderMarket["key"][]) {
+      const selected = selectMarket(event, marketKey, primary, backup);
+      const marketName = marketKey === "h2h" ? "moneyline" : marketKey === "spreads" ? "spread" : "total";
+      if (!selected) {
+        await env.DB.prepare("DELETE FROM outcomes WHERE game_id=? AND market=?")
+          .bind(event.id, marketName).run();
         continue;
       }
-      const ids: string[] = [];
-      for (const participant of market.participants) {
-        const line = participant.lines.find((candidate) => {
-          const price = candidate.prices[bookmaker]?.price;
-          return Number.isFinite(price) && price !== 0.0001;
-        });
-        if (!line) continue;
-        const side = marketName === "total" ? participant.name.toLowerCase() : participant.name === away ? "away" : "home";
-        const id = outcomeIdentity(event.event_id, marketName, participant.name);
-        ids.push(id);
+      const { market, bookmaker } = selected;
+      const currentIds: string[] = [];
+      for (const outcome of market.outcomes) {
+        const side = market.key === "totals" ? outcome.name.toLowerCase() : outcome.name === event.away_team ? "away" : "home";
+        const id = outcomeIdentity(event.id, marketName, outcome);
+        currentIds.push(id);
         await env.DB.prepare("INSERT INTO outcomes (id,game_id,market,side,label,line,price,odds_provider,captured_at) VALUES (?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET label=excluded.label,line=excluded.line,price=excluded.price,odds_provider=excluded.odds_provider,captured_at=CURRENT_TIMESTAMP")
-          .bind(id, event.event_id, marketName, side, participant.name, marketName === "moneyline" ? null : Number(line.value), line.prices[bookmaker]!.price, bookmaker === PRIMARY_BOOK ? "DraftKings" : "FanDuel").run();
+          .bind(id, event.id, marketName, side, outcome.name, outcome.point ?? null, outcome.price, bookmaker.title).run();
       }
-      if (ids.length === market.participants.length) {
-        const placeholders = ids.map(() => "?").join(",");
-        await env.DB.prepare(`DELETE FROM outcomes WHERE game_id=? AND market=? AND id NOT IN (${placeholders})`).bind(event.event_id, marketName, ...ids).run();
-      }
+      const placeholders = currentIds.map(() => "?").join(",");
+      await env.DB.prepare(`DELETE FROM outcomes WHERE game_id=? AND market=? AND id NOT IN (${placeholders})`)
+        .bind(event.id, marketName, ...currentIds).run();
     }
   }
-  await recordState(league, true, null);
-  return { league, ok: true, skipped: false, reason: null, games: source.events.length, force, sportsbook: settings.primarySportsbook };
+  await recordState(league, true, response, null);
+  return { league, ok: true, skipped: false, reason: null, games: events.length };
 }
 
 export function isScheduledFeedTime(date: Date) {
@@ -86,9 +131,9 @@ export function isScheduledFeedTime(date: Date) {
 export async function runScheduledFeeds(scheduledTime: number) {
   const scores = await Promise.all([syncLeagueScores("nfl"), syncLeagueScores("cfb")]);
   const settlement = await settleCompletedGames();
-  const odds = isScheduledFeedTime(new Date(scheduledTime)) ? await Promise.all([syncLeagueOdds("nfl"), syncLeagueOdds("cfb")]) : [];
-  const failures = [...scores, ...odds].filter((item) => !item.ok && !item.skipped);
-  const day = new Date(scheduledTime).toISOString().slice(0, 10);
-  await Promise.all(failures.map((item) => alertCommissionerOnce(`automation:${day}:${item.league}:${item.reason}`, `Gridiron Ledger automation issue: ${item.league.toUpperCase()}`, `The scheduled ${item.league.toUpperCase()} feed did not finish.\n\n${item.reason ?? "No reason was returned."}\n\nOpen the Commissioner dashboard to review the feed status.`)));
+  const odds=isScheduledFeedTime(new Date(scheduledTime))?await Promise.all([syncLeagueOdds("nfl"), syncLeagueOdds("cfb")]):[];
+  const failures=[...scores,...odds].filter((item)=>!item.ok&&!item.skipped);
+  const day=new Date(scheduledTime).toISOString().slice(0,10);
+  await Promise.all(failures.map((item)=>alertCommissionerOnce(`automation:${day}:${item.league}:${item.reason}`,`Gridiron Ledger automation issue: ${item.league.toUpperCase()}`,`The scheduled ${item.league.toUpperCase()} feed did not finish.\n\n${item.reason??"No reason was returned."}\n\nOpen the Commissioner dashboard to review the feed status.`)));
   return [...scores, settlement, ...odds];
 }
