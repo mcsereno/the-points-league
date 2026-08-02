@@ -22,11 +22,49 @@ type SelectedMarket = { market: MarketName; provider: string; outcomes: Selected
 
 const MINIMUM_INTERVAL_MINUTES = 15;
 const RUNDOWN_AFFILIATE_IDS = { draftkings: "19", fanduel: "23" } as const;
+const RUNDOWN_REQUEST_INTERVAL_MS = 1_050;
+let nextRundownRequestAt = 0;
 
 function quotaValue(value: string | null) {
   if (value == null) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function pause(milliseconds: number) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function waitForRundownRequestSlot() {
+  const delay = Math.max(0, nextRundownRequestAt - Date.now());
+  if (delay) await pause(delay);
+  nextRundownRequestAt = Date.now() + RUNDOWN_REQUEST_INTERVAL_MS;
+}
+
+async function requestRundown(url: URL) {
+  await waitForRundownRequestSlot();
+  let response: Response;
+  try {
+    response = await fetch(url, { headers: { accept: "application/json" } });
+  } catch {
+    return { response: null, error: "TheRundown service unavailable." };
+  }
+  if (response.status !== 429) return { response, error: null };
+  if (quotaValue(response.headers.get("x-datapoints-remaining")) === 0) {
+    return { response, error: "TheRundown daily data-point limit is exhausted." };
+  }
+
+  const retryAfter = Math.min(5, Math.max(1, Number(response.headers.get("retry-after") ?? "1")));
+  await pause(retryAfter * 1_000);
+  await waitForRundownRequestSlot();
+  try {
+    response = await fetch(url, { headers: { accept: "application/json" } });
+  } catch {
+    return { response: null, error: "TheRundown service unavailable." };
+  }
+  return response.ok
+    ? { response, error: null }
+    : { response, error: response.status === 429 ? "TheRundown request was rate-limited (429)." : `TheRundown request failed (${response.status}).` };
 }
 
 async function recordState(league: League, success: boolean, response: Response | null, error: string | null) {
@@ -136,12 +174,9 @@ function outcomeIdentity(gameId: string, market: MarketName, outcome: SelectedOu
 async function fetchRundownEvents(league: League, apiKey: string) {
   const events: RundownEvent[] = [];
   let lastResponse: Response | null = null;
-  let firstRequest = true;
 
   for (const date of upcomingLeagueDates()) {
     for (const sportId of sportIdsFor(league, date)) {
-      if (!firstRequest) await new Promise((resolve) => setTimeout(resolve, 1_050));
-      firstRequest = false;
       const url = new URL(`https://therundown.io/api/v2/sports/${sportId}/events/${date}`);
       url.searchParams.set("key", apiKey);
       url.searchParams.set("affiliate_ids", "19,23");
@@ -149,14 +184,9 @@ async function fetchRundownEvents(league: League, apiKey: string) {
       url.searchParams.set("main_line", "true");
       url.searchParams.set("offset", "300");
 
-      try {
-        lastResponse = await fetch(url, { headers: { accept: "application/json" } });
-      } catch {
-        return { events, response: lastResponse, error: "TheRundown service unavailable." };
-      }
-      if (!lastResponse.ok) {
-        return { events, response: lastResponse, error: `TheRundown request failed (${lastResponse.status}).` };
-      }
+      const request = await requestRundown(url);
+      if (!request.response || request.error) return { events, response: request.response ?? lastResponse, error: request.error ?? "TheRundown service unavailable." };
+      lastResponse = request.response;
       const payload = await lastResponse.json() as RundownPayload;
       events.push(...(payload.events ?? []));
     }
