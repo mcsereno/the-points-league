@@ -28,7 +28,7 @@ type BoardGame = {
 };
 
 type LiveOutcome = { id: string; market: "spread" | "moneyline" | "total"; side: string; line: number | null; price: number };
-type LiveGame = { id: string; league: "nfl" | "cfb"; awayTeam: string; homeTeam: string; kickoffAt: string; oddsProvider?: string; outcomes: LiveOutcome[] };
+type LiveGame = { id: string; league: "nfl" | "cfb"; awayTeam: string; homeTeam: string; kickoffAt: string; oddsProvider?: string; oddsCapturedAt?: string; outcomes: LiveOutcome[] };
 type MemberSnapshot = {
   displayName: string; status: string; role: string; balance?: number;
   equity?: number; openStake?: number; startingBalance?: number; rebuyCount?: number; rank?: number | null;
@@ -120,9 +120,11 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    fetch("/api/odds")
+    let active = true;
+    const refreshBoard = () => fetch("/api/odds")
       .then((response) => response.ok ? response.json() : Promise.reject())
       .then((payload: { games?: LiveGame[]; feedConfigured?: boolean }) => {
+        if (!active) return;
         const normalized = (payload.games ?? []).map((game): BoardGame | null => {
           const spreadAway = game.outcomes.find((item) => item.market === "spread" && item.side === "away");
           const spreadHome = game.outcomes.find((item) => item.market === "spread" && item.side === "home");
@@ -162,12 +164,38 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
           };
         }).filter((game): game is BoardGame => game !== null);
         if (normalized.length) {
+          const latestCapturedAt = (payload.games ?? [])
+            .map((game) => game.oddsCapturedAt)
+            .filter((value): value is string => Boolean(value))
+            .sort()
+            .at(-1);
           setBoardGames(normalized);
-          setFeedLabel(`LIVE ${normalized[0]?.network ?? ""} LINES`);
+          setTicket((current) => {
+            const liveLines = new Map((payload.games ?? []).flatMap((game) => game.outcomes.map((outcome) => [outcome.id, outcome])));
+            const changed = current.some((selection) => {
+              const live = liveLines.get(selection.id);
+              return !live || live.price !== selection.odds || (live.line ?? selection.line) !== selection.line;
+            });
+            if (changed) setNotice("Lines updated. Review your selections before placing the wager.");
+            return changed ? [] : current;
+          });
+          const capturedLabel = latestCapturedAt
+            ? ` · UPDATED ${new Date(latestCapturedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`
+            : "";
+          setFeedLabel(`LIVE ${normalized[0]?.network ?? ""} LINES${capturedLabel}`);
         } else setFeedLabel(payload.feedConfigured ? "LIVE FEED INITIALIZING" : "SAMPLE LINES");
       })
       .catch(() => setFeedLabel("SAMPLE LINES"));
 
+    void refreshBoard();
+    const timer = window.setInterval(refreshBoard, 5 * 60_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
     fetch("/api/me")
       .then((response) => response.ok ? response.json() : Promise.reject())
       .then((payload: PortalSnapshot) => setPortal(payload))
