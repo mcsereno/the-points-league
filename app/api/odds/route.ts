@@ -6,15 +6,13 @@ import { syncLeagueOdds } from "../../lib/odds-sync";
 async function loadGames(league: string | null, start: string, end: string) {
   return env.DB.prepare("SELECT id,league,away_team AS awayTeam,home_team AS homeTeam,kickoff_at AS kickoffAt,status,odds_provider AS oddsProvider,odds_captured_at AS oddsCapturedAt FROM games WHERE (? IS NULL OR league=?) AND datetime(kickoff_at)>=datetime(?) AND datetime(kickoff_at)<datetime(?) AND datetime(kickoff_at)>datetime('now') ORDER BY kickoff_at LIMIT 250").bind(league, league, start, end).all<Record<string, unknown>>();
 }
-
 export async function GET(request: Request) {
   const league = new URL(request.url).searchParams.get("league");
   if (league && league !== "nfl" && league !== "cfb") return Response.json({ error: "League must be nfl or cfb." }, { status: 400 });
   const settings = await getLeagueSettings();
   const week = leagueWeekWindow();
   let games = await loadGames(league, week.start.toISOString(), week.end.toISOString());
-  const values = env as unknown as Record<string, string | undefined>;
-  const feedConfigured = Boolean(values.THERUNDOWN_API_KEY ?? values.ODDS_API_KEY);
+  const feedConfigured = Boolean((env as unknown as Record<string, string | undefined>).ODDS_API_KEY);
   if (!games.results.length && feedConfigured) {
     if (league === "nfl" || league === "cfb") await syncLeagueOdds(league);
     else await Promise.all([syncLeagueOdds("nfl"), syncLeagueOdds("cfb")]);
