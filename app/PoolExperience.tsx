@@ -189,8 +189,14 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
       .catch(() => setPortal({ authenticated: false, signInPath: "/login?returnTo=%2F", standings: [] }));
   }, []);
 
-  const visibleGames = boardGames.filter((game) =>
-    (sport === "ALL" || game.sport === sport) && game.availableMarkets.includes(market));
+  const gamesForSport = boardGames.filter((game) => sport === "ALL" || game.sport === sport);
+  const fallbackMarket = gamesForSport.flatMap((game) => game.availableMarkets)
+    .find((available) => betType !== "Teaser" || available !== "Moneyline");
+  const activeMarket = gamesForSport.some((game) => game.availableMarkets.includes(market))
+    ? market
+    : fallbackMarket ?? market;
+  const visibleGames = gamesForSport.filter((game) => game.availableMarkets.includes(activeMarket));
+
   const ticketOdds = useMemo(() => betType === "Single"
     ? ticket[0]?.odds ?? 0
     : betType === "Parlay"
@@ -220,7 +226,7 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
     setBetType(next);
     setTicket([]);
     setNotice("");
-    if (next === "Teaser" && market === "Moneyline") setMarket("Spread");
+    if (next === "Teaser" && activeMarket === "Moneyline") setMarket("Spread");
   };
 
   const placeWager = async () => {
@@ -350,7 +356,7 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
                 </label>
                 <div className="segmented market-tabs" aria-label="Choose market">
                   {(["Spread", "Moneyline", "Total"] as Market[]).map((item) => (
-                    <button disabled={betType === "Teaser" && item === "Moneyline"} className={market === item ? "active" : ""} key={item} onClick={() => setMarket(item)}>{item}</button>
+                    <button disabled={betType === "Teaser" && item === "Moneyline"} className={activeMarket === item ? "active" : ""} key={item} onClick={() => setMarket(item)}>{item}</button>
                   ))}
                 </div>
               </div>
@@ -366,28 +372,28 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
                     <div className="team-lines">
                       {[["away", game.away, game.awayRecord], ["home", game.home, game.homeRecord]].map(([side, team, record]) => {
                         const isAway = side === "away";
-                        const pick = market === "Spread"
+                        const pick = activeMarket === "Spread"
                           ? `${team} ${isAway ? game.spreadAway : game.spreadHome}`
-                          : market === "Moneyline"
+                          : activeMarket === "Moneyline"
                             ? `${team} ML`
                             : `${isAway ? "Over" : "Under"} ${game.total}`;
-                        const odds = market === "Spread"
+                        const odds = activeMarket === "Spread"
                           ? (isAway ? game.spreadAwayOdds : game.spreadHomeOdds)
-                          : market === "Moneyline"
+                          : activeMarket === "Moneyline"
                             ? (isAway ? game.mlAway : game.mlHome)
                             : (isAway ? game.totalOverOdds : game.totalUnderOdds);
-                        const id = game.outcomeIds[market][side as "away" | "home"];
+                        const id = game.outcomeIds[activeMarket][side as "away" | "home"];
                         const selected = ticket.some((leg) => leg.id === id);
-                        const line = market === "Spread"
+                        const line = activeMarket === "Spread"
                           ? Number(isAway ? game.spreadAway : game.spreadHome)
-                          : market === "Total"
+                          : activeMarket === "Total"
                             ? Number(game.total)
                             : odds;
                         return (
                           <div className="team-line" key={side}>
                             <div className="team-name"><strong>{team}</strong><span>{record}</span></div>
-                            <button disabled={!selectedWeekIsCurrent} title={selectedWeekIsCurrent ? undefined : "This week is view-only."} className={selected ? "selected" : ""} onClick={() => select({ id, gameId: game.id, game: `${game.away} @ ${game.home}`, pick, odds, market, line, direction: market === "Total" ? (isAway ? "over" : "under") : "team" })}>
-                              <b>{market === "Spread" ? (isAway ? game.spreadAway : game.spreadHome) : market === "Moneyline" ? "ML" : isAway ? `O ${game.total}` : `U ${game.total}`}</b>
+                            <button disabled={!selectedWeekIsCurrent} title={selectedWeekIsCurrent ? undefined : "This week is view-only."} className={selected ? "selected" : ""} onClick={() => select({ id, gameId: game.id, game: `${game.away} @ ${game.home}`, pick, odds, market: activeMarket, line, direction: activeMarket === "Total" ? (isAway ? "over" : "under") : "team" })}>
+                              <b>{activeMarket === "Spread" ? (isAway ? game.spreadAway : game.spreadHome) : activeMarket === "Moneyline" ? "ML" : isAway ? `O ${game.total}` : `U ${game.total}`}</b>
                               <span>{formatOdds(odds)}</span>
                             </button>
                           </div>
