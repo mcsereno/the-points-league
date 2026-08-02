@@ -2,7 +2,6 @@ import { env } from "cloudflare:workers";
 import type { LeagueSettings } from "./league-config";
 import { getLeagueSettings } from "./league-settings";
 import { gradeLeg, gradeTicket, type TicketLeg } from "./grading";
-import { dayOffset, getRundownEvents, type League } from "./rundown";
 
 type PendingLeg = {
   id: number;
@@ -20,6 +19,14 @@ type PendingTicket = {
   playerKey: string;
   betType: "single" | "parlay" | "teaser";
   stake: number;
+};
+
+type ScoreEvent = {
+  id: string;
+  completed: boolean;
+  home_team: string;
+  away_team: string;
+  scores: Array<{ name: string; score: string }> | null;
 };
 
 async function settleTicket(wagerId: number, settings: LeagueSettings) {
@@ -59,7 +66,6 @@ async function settleTicket(wagerId: number, settings: LeagueSettings) {
   ]);
   return true;
 }
-
 export async function settleCompletedGames() {
   const settings = await getLeagueSettings();
   const legs = await env.DB.prepare(`
@@ -98,22 +104,40 @@ export async function settleCompletedGames() {
   return { gradedLegs: legs.results.length, settledWagers: settled };
 }
 
-export async function syncLeagueScores(league: League) {
-  const source = await getRundownEvents(league, [-3, -2, -1, 0].map(dayOffset), false);
-  if (!source.ok) return source;
+export async function syncLeagueScores(league: "nfl" | "cfb") {
+  const apiKey = (env as unknown as Record<string, string | undefined>).ODDS_API_KEY;
+  if (!apiKey) return { league, ok: false, skipped: true, reason: "ODDS_API_KEY is not configured." };
+
+  const sport = league === "nfl" ? "americanfootball_nfl" : "americanfootball_ncaaf";
+  const url = new URL(`https://api.the-odds-api.com/v4/sports/${sport}/scores/`);
+  url.searchParams.set("apiKey", apiKey);
+  url.searchParams.set("daysFrom", "3");
+
+  let response: Response;
+  try {
+    response = await fetch(url, { headers: { accept: "application/json" } });
+  } catch {
+    return { league, ok: false, skipped: false, reason: "Score service unavailable." };
+  }
+  if (!response.ok) {
+    return { league, ok: false, skipped: false, reason: `Score request failed (${response.status}).` };
+  }
+
+  const events = await response.json() as ScoreEvent[];
   let updated = 0;
-  for (const event of source.events) {
-    const eventStatus = event.score?.event_status ?? "";
-    const status = eventStatus === "STATUS_FINAL" ? "completed" : eventStatus === "STATUS_IN_PROGRESS" ? "live" : "scheduled";
+  for (const event of events) {
+    const homeScore = event.scores?.find((score) => score.name === event.home_team)?.score;
+    const awayScore = event.scores?.find((score) => score.name === event.away_team)?.score;
+    const status = event.completed ? "completed" : event.scores?.length ? "live" : "scheduled";
     const result = await env.DB.prepare(`
       UPDATE games
       SET status=?,home_score=?,away_score=?
       WHERE id=?
     `).bind(
       status,
-      event.score?.score_home == null ? null : Number(event.score.score_home),
-      event.score?.score_away == null ? null : Number(event.score.score_away),
-      event.event_id,
+      homeScore == null ? null : Number(homeScore),
+      awayScore == null ? null : Number(awayScore),
+      event.id,
     ).run();
     if (Number(result.meta.changes ?? 0) > 0) updated += 1;
   }
