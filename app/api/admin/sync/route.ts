@@ -8,12 +8,15 @@ export async function POST(request:Request){
   if(!isSameOrigin(request))return Response.json({error:"Invalid request origin."},{status:403});
   const commissioner=await requireCommissioner();if(!commissioner)return Response.json({error:"Commissioner access required."},{status:403});
   try{
-    const feedResults=await Promise.all([
-      syncLeagueOdds("nfl",true),
-      syncLeagueOdds("cfb",true),
+    const oddsResults=[
+      await syncLeagueOdds("nfl",true),
+      await syncLeagueOdds("cfb",true),
+    ];
+    const scoreResults=await Promise.all([
       syncLeagueScores("nfl"),
       syncLeagueScores("cfb"),
     ]);
+    const feedResults=[...oddsResults,...scoreResults];
     const settlement=await settleCompletedGames();
     const failed=feedResults.filter(result=>!result.ok);
     const failureSummary=failed.map(result=>`${result.league.toUpperCase()}: ${result.reason??"No reason was returned."}`).join(" ");
