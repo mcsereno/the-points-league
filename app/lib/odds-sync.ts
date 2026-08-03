@@ -1,4 +1,6 @@
 import { env } from "cloudflare:workers";
+import { leagueSeasonWeeks } from "./league-config";
+import { getLeagueSettings } from "./league-settings";
 import { alertCommissionerOnce } from "./operations";
 import { settleCompletedGames, syncLeagueScores } from "./settlement";
 
@@ -23,9 +25,6 @@ type SelectedMarket = { market: MarketName; provider: string; outcomes: Selected
 const MINIMUM_INTERVAL_MINUTES = 15;
 const RUNDOWN_AFFILIATE_IDS = { draftkings: "19", fanduel: "23" } as const;
 const RUNDOWN_REQUEST_INTERVAL_MS = 1_050;
-// Keep the board filled through the complete preseason and into the opening
-// regular-season slate, while discovering only dates the provider reports.
-const FUTURE_ODDS_WINDOW_DAYS = 42;
 let nextRundownRequestAt = 0;
 
 function quotaValue(value: string | null) {
@@ -99,10 +98,15 @@ function centralDateSerial(date: Date) {
   return Date.UTC(year!, month! - 1, day!);
 }
 
-function upcomingLeagueDates(now = new Date()) {
-  const start = centralDateSerial(now);
+function currentSeasonDates(seasonId: string, now = new Date()) {
+  const seasonYear = Number(seasonId);
+  const weeks = leagueSeasonWeeks(seasonId);
+  if (!Number.isInteger(seasonYear) || !weeks.length) return [];
+  const start = Math.max(centralDateSerial(now), centralDateSerial(weeks[0]!.start));
+  const end = Date.UTC(seasonYear + 1, 2, 1);
+  if (start >= end) return [];
   const dates: string[] = [];
-  for (let cursor = start; cursor < start + FUTURE_ODDS_WINDOW_DAYS * 86_400_000; cursor += 86_400_000) {
+  for (let cursor = start; cursor < end; cursor += 86_400_000) {
     dates.push(new Date(cursor).toISOString().slice(0, 10));
   }
   return dates;
@@ -187,16 +191,16 @@ function outcomeIdentity(gameId: string, market: MarketName, outcome: SelectedOu
   return `${gameId}:${market}:${outcome.name}`.toLowerCase().replace(/[^a-z0-9:]+/g, "-");
 }
 
-async function fetchRundownEvents(league: League, apiKey: string) {
+async function fetchRundownEvents(league: League, apiKey: string, seasonId: string) {
   const events: RundownEvent[] = [];
   let lastResponse: Response | null = null;
-  const eligibleDates = new Set(upcomingLeagueDates());
+  const eligibleDates = new Set(currentSeasonDates(seasonId));
   const sportIds = new Set([...eligibleDates].flatMap((date) => sportIdsFor(league, date)));
   const eventRequests: Array<{ sportId: number; date: string }> = [];
 
-  // The available-dates endpoint avoids one empty event request for every
-  // calendar day and lets preseason dates appear as soon as the provider lists
-  // them. The requested UTC offset makes its date boundary Central time.
+  // The available-dates endpoint gives us every provider-listed date remaining
+  // in this pool season, without making a request for each calendar day. The
+  // requested UTC offset makes its date boundary Central time.
   for (const sportId of sportIds) {
     const datesUrl = new URL(`https://therundown.io/api/v2/sports/${sportId}/dates`);
     datesUrl.searchParams.set("key", apiKey);
@@ -236,13 +240,14 @@ async function fetchRundownEvents(league: League, apiKey: string) {
 export async function syncLeagueOdds(league: League, force = false) {
   const apiKey = (env as unknown as Record<string, string | undefined>).RUNDOWN_API_KEY;
   if (!apiKey) return { league, ok: false, skipped: true, reason: "RUNDOWN_API_KEY is not configured." };
+  const settings = await getLeagueSettings();
 
   const state = await env.DB.prepare("SELECT last_attempt_at AS lastAttemptAt FROM odds_sync_state WHERE league=?").bind(league).first<{ lastAttemptAt: string | null }>();
   if (!force && state?.lastAttemptAt && Date.now() - new Date(state.lastAttemptAt).getTime() < MINIMUM_INTERVAL_MINUTES * 60_000) {
     return { league, ok: true, skipped: true, reason: "A recent refresh already ran." };
   }
 
-  const result = await fetchRundownEvents(league, apiKey);
+  const result = await fetchRundownEvents(league, apiKey, settings.seasonId);
   if (result.error) {
     await recordState(league, false, result.response, result.error);
     return { league, ok: false, skipped: false, reason: result.error };
