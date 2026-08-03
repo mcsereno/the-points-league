@@ -287,22 +287,34 @@ export async function syncLeagueOdds(league: League, force = false, weekKey?: st
   return { league, ok: true, skipped: false, reason: null, games };
 }
 
-export function isScheduledFeedTime(date: Date) {
+type CentralScheduleTarget = { weekdays: string[]; hour: number };
+
+function happensInThreeHourWindow(date: Date, targets: CentralScheduleTarget[]) {
   const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", weekday: "short", hour: "numeric", minute: "2-digit", hourCycle: "h23" }).formatToParts(date);
   const weekday = parts.find((part) => part.type === "weekday")?.value;
   const hour = Number(parts.find((part) => part.type === "hour")?.value);
   const minute = Number(parts.find((part) => part.type === "minute")?.value);
-  return minute === 0 && (weekday === "Mon" && hour === 6 || hour === 8 && ["Sun", "Tue", "Thu", "Fri", "Sat"].includes(weekday ?? "") || hour === 16 && ["Thu", "Fri", "Sat"].includes(weekday ?? ""));
+  const currentMinute = hour * 60 + minute;
+  return targets.some((target) => target.weekdays.includes(weekday ?? "")
+    && currentMinute >= target.hour * 60
+    && currentMinute < (target.hour + 3) * 60);
+}
+
+export function isScheduledFeedTime(date: Date) {
+  // The cron wakes every three hours in UTC. Treat each Central-time target as
+  // a three-hour window so daylight saving time cannot cause a scheduled odds
+  // refresh to be missed; it may run up to two hours after its target.
+  return happensInThreeHourWindow(date, [
+    { weekdays: ["Mon"], hour: 6 },
+    { weekdays: ["Sun", "Tue", "Thu", "Fri", "Sat"], hour: 8 },
+    { weekdays: ["Thu", "Fri", "Sat"], hour: 16 },
+  ]);
 }
 
 function isSeasonLifecycleTime(date: Date) {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", weekday: "short", hour: "numeric", minute: "2-digit", hourCycle: "h23" }).formatToParts(date);
-  const weekday = parts.find((part) => part.type === "weekday")?.value;
-  const hour = Number(parts.find((part) => part.type === "hour")?.value);
-  const minute = Number(parts.find((part) => part.type === "minute")?.value);
   // The league week ends Monday. One Tuesday morning pass avoids charging a
   // member before late Monday games and their scores have had time to settle.
-  return weekday === "Tue" && hour === 8 && minute === 0;
+  return happensInThreeHourWindow(date, [{ weekdays: ["Tue"], hour: 8 }]);
 }
 
 export async function runScheduledFeeds(scheduledTime: number) {
