@@ -203,6 +203,10 @@ button { color:inherit; }
 .admin-summary { margin-bottom:10px; }
 .feed-cards { display:grid;grid-template-columns:1fr 1fr;gap:16px; }
 .feed-actions { display:flex;gap:9px;flex-wrap:wrap; }
+.feed-actions .week-picker { min-height:38px; }
+.rebuy-notice { align-items:flex-start; }
+.rebuy-action { display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px; }
+.rebuy-action small { color:#9b310e;font-size:11px;font-weight:700; }
 .feed-cards article { background:white;border-top:5px solid var(--ink);padding:23px;display:flex;flex-direction:column;align-items:flex-start;gap:10px; }
 .feed-cards strong { font:800 18px/1.2 var(--font-display);text-transform:uppercase; }
 .feed-cards small { color:#65777d;font-size:10px; }
