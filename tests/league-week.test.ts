@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { leagueSeasonWeeks, leagueWeekKey, leagueWeekWindowForStart } from "../app/lib/league-config";
+import { competitionWeekLabels, leagueSeasonWeeks, leagueWeekKey, leagueWeekWindowForStart } from "../app/lib/league-config";
 
 test("the 2026 season begins with the Tuesday before August 1", () => {
   const weeks = leagueSeasonWeeks("2026");
@@ -16,4 +16,17 @@ test("a selected week must be a valid Tuesday start", () => {
   assert.equal(leagueWeekKey(week!), "2026-08-04");
   assert.equal(leagueWeekWindowForStart("2026-08-05"), null);
   assert.equal(leagueWeekWindowForStart("2026-02-31"), null);
+});
+
+test("competition labels use the real 2026 NFL preseason and CFB Week 0 calendar", () => {
+  assert.deepEqual(competitionWeekLabels("2026", "2026-08-18"), {
+    nfl: "NFL Preseason Week 2",
+    cfb: "CFB Week 0",
+    combined: "NFL Preseason Week 2 · CFB Week 0",
+  });
+  assert.deepEqual(competitionWeekLabels("2026", "2026-08-25"), {
+    nfl: "NFL Preseason Week 3",
+    cfb: "CFB Week 1",
+    combined: "NFL Preseason Week 3 · CFB Week 1",
+  });
 });
