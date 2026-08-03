@@ -284,6 +284,62 @@ export function leagueSeasonWeeks(seasonId: string): LeagueWeek[] {
   return weeks;
 }
 
+function calendarWeekKey(date: Date) {
+  const daysSinceTuesday = (date.getUTCDay() - 2 + 7) % 7;
+  const start = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - daysSinceTuesday));
+  return start.toISOString().slice(0, 10);
+}
+
+function firstWeekdayOnOrAfter(year: number, month: number, day: number, weekday: number) {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + (weekday - date.getUTCDay() + 7) % 7);
+  return date;
+}
+
+export function cfbWeekZeroKey(seasonId: string) {
+  const year = Number(seasonId);
+  if (!Number.isInteger(year)) return null;
+  // Week 0 is the Saturday on or after August 20 (Aug. 22 in 2026).
+  return calendarWeekKey(firstWeekdayOnOrAfter(year, 8, 20, 6));
+}
+
+export type CompetitionWeekLabels = {
+  nfl: string;
+  cfb: string;
+  combined: string;
+};
+
+export function competitionWeekLabels(seasonId: string, weekKey: string): CompetitionWeekLabels | null {
+  const seasonYear = Number(seasonId);
+  const week = leagueWeekWindowForStart(weekKey);
+  const cfbWeekZero = cfbWeekZeroKey(seasonId);
+  if (!Number.isInteger(seasonYear) || !week || !cfbWeekZero) return null;
+
+  const weekNumberFrom = (anchorKey: string) => Math.round(
+    (week.start.getTime() - leagueWeekWindowForStart(anchorKey)!.start.getTime()) / (7 * 86_400_000),
+  );
+  const laborDay = firstWeekdayOnOrAfter(seasonYear, 9, 1, 1);
+  const nflWeekOne = calendarWeekKey(new Date(laborDay.getTime() + 3 * 86_400_000));
+  const nflIndex = weekNumberFrom(nflWeekOne);
+  const cfbIndex = weekNumberFrom(cfbWeekZero);
+
+  const nfl = nflIndex === -5
+    ? "NFL Hall of Fame Game"
+    : nflIndex >= -4 && nflIndex <= -2
+      ? `NFL Preseason Week ${nflIndex + 5}`
+      : nflIndex >= 0 && nflIndex <= 17
+        ? `NFL Week ${nflIndex + 1}`
+        : nflIndex > 17
+          ? "NFL Playoffs"
+          : "NFL Preseason";
+  const cfb = cfbIndex >= 0 && cfbIndex <= 15
+    ? `CFB Week ${cfbIndex}`
+    : cfbIndex > 15
+      ? "CFB Postseason"
+      : "CFB Preseason";
+  return { nfl, cfb, combined: `${nfl} · ${cfb}` };
+}
+
 export function validateLeagueSettings(value: unknown): LeagueSettings {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Season settings must be a JSON object.");
