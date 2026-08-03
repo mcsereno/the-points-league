@@ -4,6 +4,8 @@ import { PortalHeader } from "../components/PortalHeader";
 import { leagueWeekWindow } from "../lib/league-config";
 import { getLeagueSettings } from "../lib/league-settings";
 import { requirePortalMember } from "../lib/portal-auth";
+import { canMemberRebuy, memberRequirementApplies } from "../lib/season-lifecycle";
+import { RebuyButton } from "./RebuyButton";
 
 export const dynamic = "force-dynamic";
 
@@ -48,7 +50,7 @@ export default async function PortalPage() {
   const { member } = await requirePortalMember("/portal");
   const settings = await getLeagueSettings();
   const week = leagueWeekWindow();
-  const [wagers, legs, action, weekly] = await Promise.all([
+  const [wagers, legs, action, weekly, rebuyAvailable] = await Promise.all([
     env.DB.prepare(`
       SELECT
         id,bet_type AS betType,stake,combined_odds AS combinedOdds,status,payout,
@@ -89,6 +91,7 @@ export default async function PortalPage() {
         )
     `).bind(member.email, week.start.toISOString(), week.end.toISOString())
       .first<{ wagered: number }>(),
+    canMemberRebuy(member),
   ]);
 
   const pending = Number(action?.pending ?? 0);
@@ -96,6 +99,7 @@ export default async function PortalPage() {
   const equity = Number(member.balance) + openStake;
   const net = equity - Number(member.startingBalance);
   const weeklyWagered = Number(weekly?.wagered ?? 0);
+  const requirementApplies = member.status === "approved" && memberRequirementApplies(member.createdAt, week);
   const weeklyRemaining = Math.max(0, Math.min(
     settings.weeklyMinimumPoints,
     settings.weeklyMinimumPoints - weeklyWagered,
@@ -114,7 +118,9 @@ export default async function PortalPage() {
     </section>
     <section className="content-band">
       <div className="shell">
-        {member.status !== "approved" && <div className="portal-notice"><strong>Your account is waiting for approval.</strong><span>You can view the board, but wagering stays closed until a commissioner approves your account.</span></div>}
+        {member.status === "pending" && <div className="portal-notice"><strong>Your account is waiting for approval.</strong><span>You can view the board, but wagering stays closed until a commissioner approves your account.</span></div>}
+        {member.status === "suspended" && <div className="portal-notice"><strong>Your entry is suspended.</strong><span>Wagering is closed. This week’s minimum is exempt while the suspension is in effect.</span></div>}
+        {member.status === "eliminated" && <div className="portal-notice"><strong>Your season is complete.</strong><span>The rebuy window has closed. Your entry remains in the final standings.</span></div>}
         <div className="portal-stats">
           <article><span>AVAILABLE</span><strong>{points(Number(member.balance))}</strong><small>POINTS</small></article>
           <article><span>SEASON NET</span><strong>{net >= 0 ? "+" : ""}{points(net)}</strong><small>POINTS</small></article>
@@ -124,12 +130,13 @@ export default async function PortalPage() {
         <section className="weekly-progress" aria-label="Weekly wagering requirement">
           <div>
             <span>THIS WEEK</span>
-            <strong>{points(weeklyWagered)} of {points(settings.weeklyMinimumPoints)} Points wagered</strong>
-            <small>{weeklyRemaining > 0 ? `${points(weeklyRemaining)} Points remaining` : "Requirement met"}</small>
+            <strong>{requirementApplies ? `${points(weeklyWagered)} of ${points(settings.weeklyMinimumPoints)} Points wagered` : "Requirement begins next league week"}</strong>
+            <small>{requirementApplies ? weeklyRemaining > 0 ? `${points(weeklyRemaining)} Points remaining` : "Requirement met" : "Entries created this week are exempt until the following Tuesday."}</small>
           </div>
-          <div className="progress-track" aria-hidden="true"><i style={{ width: `${progress}%` }} /></div>
+          <div className="progress-track" aria-hidden="true"><i style={{ width: `${requirementApplies ? progress : 0}%` }} /></div>
         </section>
-        <div className="portal-section-heading"><div><p className="eyebrow">YOUR LEDGER</p><h2>Wager history</h2></div><Link className="button button-primary" href="/#board">Build a wager <span>↗</span></Link></div>
+        {rebuyAvailable && <div className="portal-notice rebuy-notice"><strong>Your balance is at zero.</strong><span>Rebuys are available until the first CFB Week 8 kickoff and restore the configured starting points.</span><RebuyButton /></div>}
+        <div className="portal-section-heading"><div><p className="eyebrow">YOUR LEDGER</p><h2>Wager history</h2></div>{member.status === "approved" && <Link className="button button-primary" href="/#board">Build a wager <span>↗</span></Link>}</div>
         <div className="portal-table-wrap">
           <table className="portal-table"><thead><tr><th>Ticket</th><th>Type</th><th>Placed</th><th>Stake</th><th>Price</th><th>Status</th><th>Return</th></tr></thead>
             <tbody>{wagers.results.length ? (wagers.results as WagerRow[]).map((wager) => {
