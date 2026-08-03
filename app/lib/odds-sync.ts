@@ -1,8 +1,9 @@
 import { env } from "cloudflare:workers";
-import { leagueSeasonWeeks } from "./league-config";
+import { leagueSeasonWeeks, leagueWeekWindow, leagueWeekWindowForStart } from "./league-config";
 import { getLeagueSettings } from "./league-settings";
 import { alertCommissionerOnce } from "./operations";
 import { settleCompletedGames, syncLeagueScores } from "./settlement";
+import { runSeasonLifecycle } from "./season-lifecycle";
 
 type League = "nfl" | "cfb";
 type MarketName = "moneyline" | "spread" | "total";
@@ -98,13 +99,11 @@ function centralDateSerial(date: Date) {
   return Date.UTC(year!, month! - 1, day!);
 }
 
-function currentSeasonDates(seasonId: string, now = new Date()) {
-  const seasonYear = Number(seasonId);
-  const weeks = leagueSeasonWeeks(seasonId);
-  if (!Number.isInteger(seasonYear) || !weeks.length) return [];
-  const start = Math.max(centralDateSerial(now), centralDateSerial(weeks[0]!.start));
-  const end = Date.UTC(seasonYear + 1, 2, 1);
-  if (start >= end) return [];
+function refreshWeekDates(seasonId: string, weekKey?: string) {
+  const week = weekKey ? leagueWeekWindowForStart(weekKey) : leagueWeekWindow();
+  if (!week || weekKey && !leagueSeasonWeeks(seasonId).some((candidate) => candidate.key === weekKey)) return [];
+  const start = centralDateSerial(week.start);
+  const end = centralDateSerial(week.end);
   const dates: string[] = [];
   for (let cursor = start; cursor < end; cursor += 86_400_000) {
     dates.push(new Date(cursor).toISOString().slice(0, 10));
@@ -191,16 +190,16 @@ function outcomeIdentity(gameId: string, market: MarketName, outcome: SelectedOu
   return `${gameId}:${market}:${outcome.name}`.toLowerCase().replace(/[^a-z0-9:]+/g, "-");
 }
 
-async function fetchRundownEvents(league: League, apiKey: string, seasonId: string) {
+async function fetchRundownEvents(league: League, apiKey: string, seasonId: string, weekKey?: string) {
   const events: RundownEvent[] = [];
   let lastResponse: Response | null = null;
-  const eligibleDates = new Set(currentSeasonDates(seasonId));
+  const eligibleDates = new Set(refreshWeekDates(seasonId, weekKey));
   const sportIds = new Set([...eligibleDates].flatMap((date) => sportIdsFor(league, date)));
   const eventRequests: Array<{ sportId: number; date: string }> = [];
 
-  // The available-dates endpoint gives us every provider-listed date remaining
-  // in this pool season, without making a request for each calendar day. The
-  // requested UTC offset makes its date boundary Central time.
+  // A refresh covers one Tuesday–Monday pool week. The available-dates endpoint
+  // avoids empty event requests while keeping manual and scheduled refreshes
+  // bounded to the selected slate.
   for (const sportId of sportIds) {
     const datesUrl = new URL(`https://therundown.io/api/v2/sports/${sportId}/dates`);
     datesUrl.searchParams.set("key", apiKey);
@@ -237,7 +236,7 @@ async function fetchRundownEvents(league: League, apiKey: string, seasonId: stri
   return { events, response: lastResponse, error: null };
 }
 
-export async function syncLeagueOdds(league: League, force = false) {
+export async function syncLeagueOdds(league: League, force = false, weekKey?: string) {
   const apiKey = (env as unknown as Record<string, string | undefined>).RUNDOWN_API_KEY;
   if (!apiKey) return { league, ok: false, skipped: true, reason: "RUNDOWN_API_KEY is not configured." };
   const settings = await getLeagueSettings();
@@ -247,7 +246,10 @@ export async function syncLeagueOdds(league: League, force = false) {
     return { league, ok: true, skipped: true, reason: "A recent refresh already ran." };
   }
 
-  const result = await fetchRundownEvents(league, apiKey, settings.seasonId);
+  if (weekKey && !leagueSeasonWeeks(settings.seasonId).some((week) => week.key === weekKey)) {
+    return { league, ok: false, skipped: false, reason: "The selected week is outside the current season." };
+  }
+  const result = await fetchRundownEvents(league, apiKey, settings.seasonId, weekKey);
   if (result.error) {
     await recordState(league, false, result.response, result.error);
     return { league, ok: false, skipped: false, reason: result.error };
@@ -286,20 +288,33 @@ export async function syncLeagueOdds(league: League, force = false) {
 }
 
 export function isScheduledFeedTime(date: Date) {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", weekday: "short", hour: "numeric", hourCycle: "h23" }).formatToParts(date);
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", weekday: "short", hour: "numeric", minute: "2-digit", hourCycle: "h23" }).formatToParts(date);
   const weekday = parts.find((part) => part.type === "weekday")?.value;
   const hour = Number(parts.find((part) => part.type === "hour")?.value);
-  return weekday === "Mon" && hour === 6 || hour === 8 && ["Sun", "Tue", "Thu", "Fri", "Sat"].includes(weekday ?? "") || hour === 16 && ["Thu", "Fri", "Sat"].includes(weekday ?? "");
+  const minute = Number(parts.find((part) => part.type === "minute")?.value);
+  return minute === 0 && (weekday === "Mon" && hour === 6 || hour === 8 && ["Sun", "Tue", "Thu", "Fri", "Sat"].includes(weekday ?? "") || hour === 16 && ["Thu", "Fri", "Sat"].includes(weekday ?? ""));
+}
+
+function isSeasonLifecycleTime(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", weekday: "short", hour: "numeric", minute: "2-digit", hourCycle: "h23" }).formatToParts(date);
+  const weekday = parts.find((part) => part.type === "weekday")?.value;
+  const hour = Number(parts.find((part) => part.type === "hour")?.value);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value);
+  // The league week ends Monday. One Tuesday morning pass avoids charging a
+  // member before late Monday games and their scores have had time to settle.
+  return weekday === "Tue" && hour === 8 && minute === 0;
 }
 
 export async function runScheduledFeeds(scheduledTime: number) {
+  const scheduledDate = new Date(scheduledTime);
   const scores = await Promise.all([syncLeagueScores("nfl"), syncLeagueScores("cfb")]);
   const settlement = await settleCompletedGames();
-  const odds = isScheduledFeedTime(new Date(scheduledTime))
+  const lifecycle = isSeasonLifecycleTime(scheduledDate) ? await runSeasonLifecycle(scheduledDate) : null;
+  const odds = isScheduledFeedTime(scheduledDate)
     ? [await syncLeagueOdds("nfl"), await syncLeagueOdds("cfb")]
     : [];
   const failures = [...scores, ...odds].filter((item) => !item.ok && !item.skipped);
   const day = new Date(scheduledTime).toISOString().slice(0, 10);
   await Promise.all(failures.map((item) => alertCommissionerOnce(`automation:${day}:${item.league}:${item.reason}`, `Gridiron Ledger automation issue: ${item.league.toUpperCase()}`, `The scheduled ${item.league.toUpperCase()} feed did not finish.\n\n${item.reason ?? "No reason was returned."}\n\nOpen the Commissioner dashboard to review the feed status.`)));
-  return [...scores, settlement, ...odds];
+  return [...scores, settlement, ...(lifecycle ? [lifecycle] : []), ...odds];
 }
