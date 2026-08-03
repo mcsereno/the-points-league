@@ -202,6 +202,7 @@ button { color:inherit; }
 .empty-ledger strong { color:var(--ink);font:900 24px/1 var(--font-display);text-transform:uppercase; }
 .admin-summary { margin-bottom:10px; }
 .feed-cards { display:grid;grid-template-columns:1fr 1fr;gap:16px; }
+.feed-actions { display:flex;gap:9px;flex-wrap:wrap; }
 .feed-cards article { background:white;border-top:5px solid var(--ink);padding:23px;display:flex;flex-direction:column;align-items:flex-start;gap:10px; }
 .feed-cards strong { font:800 18px/1.2 var(--font-display);text-transform:uppercase; }
 .feed-cards small { color:#65777d;font-size:10px; }
