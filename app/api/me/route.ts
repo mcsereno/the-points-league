@@ -27,7 +27,7 @@ async function getStandings() {
       COALESCE(SUM(CASE WHEN w.status='lost' THEN 1 ELSE 0 END), 0) AS losses
     FROM members m
     LEFT JOIN wagers w ON w.player_key=m.email
-    WHERE m.status='approved'
+    WHERE m.status IN ('approved','eliminated')
     GROUP BY m.id,m.display_name,m.balance,m.starting_balance,m.rebuy_count
     ORDER BY equity DESC,m.rebuy_count ASC,m.display_name ASC
   `).all<Standing>();
@@ -58,7 +58,7 @@ export async function GET() {
 
   const rank = standings.findIndex((row) => row.memberId === member.id) + 1;
   const standing = standings.find((row) => row.memberId === member.id);
-  const approved = member.status === "approved";
+  const approved = member.status === "approved" || member.status === "eliminated";
   return Response.json({
     authenticated: true,
     member: approved ? {
