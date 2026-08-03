@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import type { LeagueSettings } from "./league-config";
+import type { LeagueSettings, LeagueWeek } from "./league-config";
 import { getLeagueSettings } from "./league-settings";
 import { gradeLeg, gradeTicket, type TicketLeg } from "./grading";
 
@@ -73,14 +73,26 @@ function matchingScore(game: ScoreGame, events: EspnEvent[]) {
   });
 }
 
-export async function syncLeagueScores(league: League) {
-  const games = await env.DB.prepare(`
+export async function syncLeagueScores(league: League, week?: LeagueWeek) {
+  const query = week ? `
+    SELECT id,away_team AS awayTeam,home_team AS homeTeam,kickoff_at AS kickoffAt
+    FROM games
+    WHERE league=? AND status!='completed'
+      AND datetime(kickoff_at)>=datetime(?)
+      AND datetime(kickoff_at)<datetime(?)
+      AND datetime(kickoff_at)>=datetime('now','-3 days')
+      AND datetime(kickoff_at)<=datetime('now','+1 day')
+  ` : `
     SELECT id,away_team AS awayTeam,home_team AS homeTeam,kickoff_at AS kickoffAt
     FROM games
     WHERE league=? AND status!='completed'
       AND datetime(kickoff_at)>=datetime('now','-3 days')
       AND datetime(kickoff_at)<=datetime('now','+1 day')
-  `).bind(league).all<ScoreGame>();
+  `;
+  const statement = week
+    ? env.DB.prepare(query).bind(league, week.start.toISOString(), week.end.toISOString())
+    : env.DB.prepare(query).bind(league);
+  const games = await statement.all<ScoreGame>();
   if (!games.results.length) return { league, ok: true, skipped: true, reason: "No unsettled games need scores.", gamesUpdated: 0 };
 
   const byDate = new Map<string, ScoreGame[]>();
