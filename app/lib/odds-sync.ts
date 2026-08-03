@@ -16,13 +16,16 @@ type RundownEvent = {
   markets?: RundownMarket[];
 };
 type RundownPayload = { events?: RundownEvent[] };
+type RundownDatesPayload = { dates?: string[] };
 type SelectedOutcome = { name: string; point: number | null; price: number };
 type SelectedMarket = { market: MarketName; provider: string; outcomes: SelectedOutcome[] };
 
 const MINIMUM_INTERVAL_MINUTES = 15;
 const RUNDOWN_AFFILIATE_IDS = { draftkings: "19", fanduel: "23" } as const;
 const RUNDOWN_REQUEST_INTERVAL_MS = 1_050;
-const FUTURE_ODDS_WINDOW_DAYS = 10;
+// Keep the board filled through the complete preseason and into the opening
+// regular-season slate, while discovering only dates the provider reports.
+const FUTURE_ODDS_WINDOW_DAYS = 42;
 let nextRundownRequestAt = 0;
 
 function quotaValue(value: string | null) {
@@ -49,7 +52,8 @@ async function requestRundown(url: URL) {
   } catch {
     return { response: null, error: "TheRundown service unavailable." };
   }
-  if (response.status !== 429) return { response, error: null };
+  if (response.ok) return { response, error: null };
+  if (response.status !== 429) return { response, error: `TheRundown request failed (${response.status}).` };
   if (quotaValue(response.headers.get("x-datapoints-remaining")) === 0) {
     return { response, error: "TheRundown daily data-point limit is exhausted." };
   }
@@ -112,6 +116,20 @@ function sportIdsFor(league: League, date: string) {
   return [2];
 }
 
+function dateKey(value: unknown) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value) ? value.slice(0, 10) : null;
+}
+
+function rundownEventsUrl(sportId: number, date: string, apiKey: string) {
+  const url = new URL(`https://therundown.io/api/v2/sports/${sportId}/events/${date}`);
+  url.searchParams.set("key", apiKey);
+  url.searchParams.set("affiliate_ids", "19,23");
+  url.searchParams.set("market_ids", "1,2,3");
+  url.searchParams.set("main_line", "true");
+  url.searchParams.set("offset", "300");
+  return url;
+}
+
 function marketName(marketId: number): MarketName | null {
   if (marketId === 1) return "moneyline";
   if (marketId === 2) return "spread";
@@ -172,23 +190,46 @@ function outcomeIdentity(gameId: string, market: MarketName, outcome: SelectedOu
 async function fetchRundownEvents(league: League, apiKey: string) {
   const events: RundownEvent[] = [];
   let lastResponse: Response | null = null;
+  const eligibleDates = new Set(upcomingLeagueDates());
+  const sportIds = new Set([...eligibleDates].flatMap((date) => sportIdsFor(league, date)));
+  const eventRequests: Array<{ sportId: number; date: string }> = [];
 
-  for (const date of upcomingLeagueDates()) {
-    for (const sportId of sportIdsFor(league, date)) {
-      const url = new URL(`https://therundown.io/api/v2/sports/${sportId}/events/${date}`);
-      url.searchParams.set("key", apiKey);
-      url.searchParams.set("affiliate_ids", "19,23");
-      url.searchParams.set("market_ids", "1,2,3");
-      url.searchParams.set("main_line", "true");
-      url.searchParams.set("offset", "300");
+  // The available-dates endpoint avoids one empty event request for every
+  // calendar day and lets preseason dates appear as soon as the provider lists
+  // them. The requested UTC offset makes its date boundary Central time.
+  for (const sportId of sportIds) {
+    const datesUrl = new URL(`https://therundown.io/api/v2/sports/${sportId}/dates`);
+    datesUrl.searchParams.set("key", apiKey);
+    datesUrl.searchParams.set("offset", "300");
+    const request = await requestRundown(datesUrl);
+    if (!request.response || request.error) return { events, response: request.response ?? lastResponse, error: request.error ?? "TheRundown service unavailable." };
+    lastResponse = request.response;
 
-      const request = await requestRundown(url);
-      if (!request.response || request.error) return { events, response: request.response ?? lastResponse, error: request.error ?? "TheRundown service unavailable." };
-      lastResponse = request.response;
-      const payload = await lastResponse.json() as RundownPayload;
-      events.push(...(payload.events ?? []));
+    let payload: RundownDatesPayload;
+    try {
+      payload = await lastResponse.json() as RundownDatesPayload;
+    } catch {
+      return { events, response: lastResponse, error: "TheRundown returned unreadable available-date data." };
+    }
+    for (const date of payload.dates ?? []) {
+      const key = dateKey(date);
+      if (key && eligibleDates.has(key)) eventRequests.push({ sportId, date: key });
     }
   }
+
+  for (const { sportId, date } of eventRequests) {
+    const request = await requestRundown(rundownEventsUrl(sportId, date, apiKey));
+    if (!request.response || request.error) return { events, response: request.response ?? lastResponse, error: request.error ?? "TheRundown service unavailable." };
+    lastResponse = request.response;
+    let payload: RundownPayload;
+    try {
+      payload = await lastResponse.json() as RundownPayload;
+    } catch {
+      return { events, response: lastResponse, error: "TheRundown returned unreadable event data." };
+    }
+    events.push(...(payload.events ?? []));
+  }
+
   return { events, response: lastResponse, error: null };
 }
 
