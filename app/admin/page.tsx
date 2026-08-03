@@ -5,17 +5,23 @@ import { requireCommissioner } from "../lib/portal-auth";
 import { getLeagueSettings } from "../lib/league-settings";
 import { AdminPortal } from "./AdminPortal";
 import { isEmailConfigured } from "../lib/email";
+import { competitionWeekLabels, leagueSeasonWeeks, leagueWeekKey, leagueWeekWindow } from "../lib/league-config";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
   if (!await requireCommissioner()) redirect("/portal");
   const settings=await getLeagueSettings();
+  const currentWeekKey=leagueWeekKey(leagueWeekWindow());
+  const refreshWeeks=leagueSeasonWeeks(settings.seasonId).map(week=>{
+    const labels=competitionWeekLabels(settings.seasonId,week.key);
+    return {key:week.key,label:labels?`${labels.nfl} / ${labels.cfb} · ${week.label}`:week.label,current:week.key===currentWeekKey};
+  });
   const [members, wagers, sync, audit] = await Promise.all([
     env.DB.prepare("SELECT id,email,display_name AS displayName,status,role,starting_balance AS startingBalance,balance,email_verified_at AS emailVerifiedAt,created_at AS createdAt FROM members ORDER BY created_at DESC").all(),
     env.DB.prepare("SELECT id,player_key AS playerKey,bet_type AS betType,stake,status,payout,grading_reason AS gradingReason,placed_at AS placedAt,settled_at AS settledAt FROM wagers ORDER BY placed_at DESC LIMIT 100").all(),
     env.DB.prepare("SELECT league,last_success_at AS lastSuccessAt,credits_remaining AS creditsRemaining,last_error AS lastError FROM odds_sync_state ORDER BY league").all(),
     env.DB.prepare("SELECT actor_email AS actorEmail,event_type AS eventType,subject_type AS subjectType,subject_id AS subjectId,details_json AS detailsJson,created_at AS createdAt FROM audit_events WHERE season_id=? ORDER BY id DESC LIMIT 50").bind(settings.seasonId).all(),
   ]);
-  return <main><PortalHeader admin /><section className="portal-hero shell"><div><p className="eyebrow">COMMISSIONER CONTROL</p><h1>Commissioner dashboard</h1><p>Approve members, email the league, manage the season, refresh scores and markets, and review tickets.</p></div></section><section className="content-band"><AdminPortal initialMembers={members.results as never[]} initialWagers={wagers.results as never[]} sync={sync.results as never[]} initialSettings={settings} initialAudit={audit.results as never[]} emailConfigured={isEmailConfigured()} /></section></main>;
+  return <main><PortalHeader admin /><section className="portal-hero shell"><div><p className="eyebrow">COMMISSIONER CONTROL</p><h1>Commissioner dashboard</h1><p>Approve members, email the league, manage the season, refresh scores and markets, and review tickets.</p></div></section><section className="content-band"><AdminPortal initialMembers={members.results as never[]} initialWagers={wagers.results as never[]} sync={sync.results as never[]} initialSettings={settings} initialAudit={audit.results as never[]} emailConfigured={isEmailConfigured()} refreshWeeks={refreshWeeks} /></section></main>;
 }
