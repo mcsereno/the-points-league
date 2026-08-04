@@ -11,6 +11,35 @@ type EspnCompetitor = { homeAway?: "home" | "away"; score?: string; team?: { dis
 type EspnEvent = { status?: { type?: { completed?: boolean; name?: string } }; competitions?: Array<{ competitors?: EspnCompetitor[] }> };
 type EspnScoreboard = { events?: EspnEvent[] };
 
+async function voidExpiredGames(settings: LeagueSettings) {
+  const games = await env.DB.prepare(`
+    SELECT id
+    FROM games
+    WHERE status NOT IN ('completed','void')
+      AND datetime(kickoff_at)<=datetime('now', ?)
+  `).bind(`-${settings.postponementHours} hours`).all<{ id: string }>();
+  const touched = new Set<number>();
+  let voidedLegs = 0;
+
+  for (const game of games.results) {
+    await env.DB.prepare("UPDATE games SET status='void' WHERE id=? AND status NOT IN ('completed','void')").bind(game.id).run();
+    const legs = await env.DB.prepare(`
+      SELECT wl.id,wl.wager_id AS wagerId
+      FROM wager_legs wl
+      JOIN wagers w ON w.id=wl.wager_id
+      WHERE wl.game_id=? AND wl.result='pending' AND w.status='pending'
+    `).bind(game.id).all<{ id: number; wagerId: number }>();
+    if (!legs.results.length) continue;
+    await env.DB.prepare("UPDATE wager_legs SET result='void' WHERE game_id=? AND result='pending'").bind(game.id).run();
+    voidedLegs += legs.results.length;
+    for (const leg of legs.results) touched.add(Number(leg.wagerId));
+  }
+
+  let settledWagers = 0;
+  for (const wagerId of touched) if (await settleTicket(wagerId, settings)) settledWagers += 1;
+  return { voidedGames: games.results.length, voidedLegs, settledWagers };
+}
+
 async function settleTicket(wagerId: number, settings: LeagueSettings) {
   const ticket = await env.DB.prepare(`SELECT id,player_key AS playerKey,bet_type AS betType,stake FROM wagers WHERE id=? AND status='pending'`).bind(wagerId).first<PendingTicket>();
   if (!ticket) return false;
@@ -28,6 +57,7 @@ async function settleTicket(wagerId: number, settings: LeagueSettings) {
 
 export async function settleCompletedGames() {
   const settings = await getLeagueSettings();
+  const expired = await voidExpiredGames(settings);
   const legs = await env.DB.prepare(`
     SELECT wl.id,wl.wager_id AS wagerId,wl.market,o.side,wl.locked_line AS lockedLine,wl.teased_line AS teasedLine,g.away_score AS awayScore,g.home_score AS homeScore
     FROM wager_legs wl
@@ -44,7 +74,7 @@ export async function settleCompletedGames() {
   }
   let settled = 0;
   for (const wagerId of touched) if (await settleTicket(wagerId, settings)) settled += 1;
-  return { gradedLegs: legs.results.length, settledWagers: settled };
+  return { gradedLegs: legs.results.length + expired.voidedLegs, settledWagers: settled + expired.settledWagers, voidedGames: expired.voidedGames };
 }
 
 function centralDateKey(date: Date) {
