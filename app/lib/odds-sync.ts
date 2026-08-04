@@ -240,7 +240,7 @@ async function syncEspnNflPreseasonOdds(seasonId: string) {
     .filter(likelyNflGameDate);
   const responses = await Promise.all(dates.map(async (date) => {
     try {
-      const response = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${date}&limit=100`);
+      const response = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${date}&seasontype=1&limit=100`);
       if (!response.ok) return [] as EspnEvent[];
       const payload = await response.json() as EspnScoreboard;
       return payload.events ?? [];
