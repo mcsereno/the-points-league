@@ -29,7 +29,7 @@ type BoardGame = {
 
 type LiveOutcome = { id: string; market: "spread" | "moneyline" | "total"; side: string; line: number | null; price: number };
 type LiveGame = { id: string; league: "nfl" | "cfb"; awayTeam: string; homeTeam: string; kickoffAt: string; oddsProvider?: string; oddsCapturedAt?: string; outcomes: LiveOutcome[] };
-type BoardWeek = { key: string; label: string; start: string; end: string; isCurrent: boolean };
+type BoardWeek = { key: string; label: string; competitionLabel?: string; start: string; end: string; isCurrent: boolean };
 type OddsPayload = { games?: LiveGame[]; feedConfigured?: boolean; week?: BoardWeek; weeks?: BoardWeek[] };
 type MemberSnapshot = {
   displayName: string; status: string; role: string; balance?: number;
@@ -351,7 +351,7 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
                     }}
                   >
                     {!weekOptions.length && <option value="">Loading weeks</option>}
-                    {weekOptions.map((week) => <option key={week.key} value={week.key}>{week.label}{week.isCurrent ? " · Current" : ""}</option>)}
+                    {weekOptions.map((week) => <option key={week.key} value={week.key}>{week.competitionLabel ?? week.label}{week.isCurrent ? " · Current" : ""}</option>)}
                   </select>
                 </label>
                 <div className="segmented market-tabs" aria-label="Choose market">
