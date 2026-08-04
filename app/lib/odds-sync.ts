@@ -21,6 +21,17 @@ type RundownEvent = {
 type RundownPayload = { events?: RundownEvent[] };
 type SelectedOutcome = { name: string; point: number | null; price: number };
 type SelectedMarket = { market: MarketName; provider: string; outcomes: SelectedOutcome[] };
+type EspnTeam = { displayName?: string; abbreviation?: string };
+type EspnCompetitor = { homeAway?: "home" | "away"; team?: EspnTeam };
+type EspnOdds = {
+  provider?: { name?: string };
+  details?: string;
+  spread?: number;
+  awayTeamOdds?: { spreadOdds?: number };
+  homeTeamOdds?: { spreadOdds?: number };
+};
+type EspnEvent = { id?: string; date?: string; competitions?: Array<{ competitors?: EspnCompetitor[]; odds?: EspnOdds[] }> };
+type EspnScoreboard = { events?: EspnEvent[] };
 
 const MINIMUM_INTERVAL_MINUTES = 15;
 const RUNDOWN_AFFILIATE_IDS = { pinnacle: "3", draftkings: "19", fanduel: "23" } as const;
@@ -206,6 +217,69 @@ function likelyNflGameDate(date: string) {
   return weekday === 0 || weekday === 1 || weekday >= 4;
 }
 
+function espnFavoriteSide(odds: EspnOdds, away: EspnTeam, home: EspnTeam) {
+  const details = odds.details?.toLowerCase() ?? "";
+  const matches = (team: EspnTeam) => [team.displayName, team.abbreviation]
+    .filter((value): value is string => Boolean(value))
+    .some((value) => details.startsWith(value.toLowerCase()));
+  if (matches(away)) return "away" as const;
+  if (matches(home)) return "home" as const;
+  return null;
+}
+
+function espnProvider(odds: EspnOdds[]) {
+  return odds.find((item) => item.provider?.name === "DraftKings")
+    ?? odds.find((item) => item.provider?.name === "FanDuel")
+    ?? odds[0]
+    ?? null;
+}
+
+async function syncEspnNflPreseasonOdds(seasonId: string) {
+  const dates = nflPreseasonWeekKeys(seasonId)
+    .flatMap((weekKey) => refreshWeekDates(seasonId, weekKey))
+    .filter(likelyNflGameDate);
+  const responses = await Promise.all(dates.map(async (date) => {
+    try {
+      const response = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${date}&limit=100`);
+      if (!response.ok) return [] as EspnEvent[];
+      const payload = await response.json() as EspnScoreboard;
+      return payload.events ?? [];
+    } catch {
+      return [] as EspnEvent[];
+    }
+  }));
+
+  let games = 0;
+  for (const event of responses.flat()) {
+    const competition = event.competitions?.[0];
+    const away = competition?.competitors?.find((item) => item.homeAway === "away")?.team;
+    const home = competition?.competitors?.find((item) => item.homeAway === "home")?.team;
+    const odds = espnProvider(competition?.odds ?? []);
+    const favorite = odds && away && home ? espnFavoriteSide(odds, away, home) : null;
+    const spread = Number(odds?.spread);
+    if (!event.id || !event.date || !away?.displayName || !home?.displayName || !favorite || !Number.isFinite(spread)) continue;
+
+    const favoriteLine = spread <= 0 ? spread : -spread;
+    const awayLine = favorite === "away" ? favoriteLine : -favoriteLine;
+    const homeLine = favorite === "home" ? favoriteLine : -favoriteLine;
+    const awayPrice = Number(odds?.awayTeamOdds?.spreadOdds ?? -110);
+    const homePrice = Number(odds?.homeTeamOdds?.spreadOdds ?? -110);
+    const gameId = `espn:${event.id}`;
+    const provider = odds.provider?.name ?? "ESPN available sportsbook";
+
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO games (id,league,away_team,home_team,kickoff_at,status,odds_provider,odds_captured_at) VALUES (?,?,?,?,?,'scheduled',?,CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET away_team=excluded.away_team,home_team=excluded.home_team,kickoff_at=excluded.kickoff_at,odds_provider=excluded.odds_provider,odds_captured_at=CURRENT_TIMESTAMP")
+        .bind(gameId, "nfl", away.displayName, home.displayName, event.date, provider),
+      env.DB.prepare("INSERT INTO outcomes (id,game_id,market,side,label,line,price,odds_provider,captured_at) VALUES (?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET label=excluded.label,line=excluded.line,price=excluded.price,odds_provider=excluded.odds_provider,captured_at=CURRENT_TIMESTAMP")
+        .bind(`${gameId}:spread:away`, gameId, "spread", "away", away.displayName, awayLine, Number.isFinite(awayPrice) ? Math.trunc(awayPrice) : -110, provider),
+      env.DB.prepare("INSERT INTO outcomes (id,game_id,market,side,label,line,price,odds_provider,captured_at) VALUES (?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET label=excluded.label,line=excluded.line,price=excluded.price,odds_provider=excluded.odds_provider,captured_at=CURRENT_TIMESTAMP")
+        .bind(`${gameId}:spread:home`, gameId, "spread", "home", home.displayName, homeLine, Number.isFinite(homePrice) ? Math.trunc(homePrice) : -110, provider),
+    ]);
+    games += 1;
+  }
+  return { games, spreadGames: games };
+}
+
 async function fetchRundownEvents(league: League, apiKey: string, seasonId: string, weekKey?: string, scanDates = false) {
   const events: RundownEvent[] = [];
   let lastResponse: Response | null = null;
@@ -286,6 +360,11 @@ export async function syncLeagueOdds(league: League, force = false, weekKey?: st
 
 export async function syncNflPreseasonOdds(force = false) {
   const settings = await getLeagueSettings();
+  const espn = await syncEspnNflPreseasonOdds(settings.seasonId);
+  if (espn.games) {
+    await recordState("nfl", true, null, null);
+    return { league: "nfl" as const, ok: true, skipped: false, reason: null, weeks: nflPreseasonWeekKeys(settings.seasonId).length, ...espn };
+  }
   const weeks = nflPreseasonWeekKeys(settings.seasonId);
   let games = 0;
   let spreadGames = 0;
