@@ -12,6 +12,7 @@ export const members = sqliteTable("members", {
   startingBalance: real("starting_balance").notNull().default(10000),
   balance: real("balance").notNull().default(10000),
   rebuyCount: integer("rebuy_count").notNull().default(0),
+  rebuyRequestId: text("rebuy_request_id"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [index("members_status_idx").on(table.status)]);
