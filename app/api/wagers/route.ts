@@ -154,15 +154,16 @@ export async function POST(request: Request) {
     `).bind(externalId, member.email, betType, stake, combinedOdds, teaserPoints, member.email, stake),
     ...outcomes.map((outcome) => env.DB.prepare(`
       INSERT INTO wager_legs (
-        wager_id,game_id,outcome_id,market,selection,locked_line,locked_price,teased_line
+        wager_id,game_id,outcome_id,market,locked_side,selection,locked_line,locked_price,teased_line
       )
-      SELECT id,?,?,?,?,?,?,?
+      SELECT id,?,?,?,?,?,?,?,?
       FROM wagers
       WHERE external_id=?
     `).bind(
       outcome.gameId,
       outcome.id,
       outcome.market,
+      outcome.side,
       outcome.label,
       outcome.line,
       outcome.price,
