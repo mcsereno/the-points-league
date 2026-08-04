@@ -1,15 +1,17 @@
 import { env } from "cloudflare:workers";
-import { leagueSeasonWeeks, leagueWeekKey, leagueWeekWindow, leagueWeekWindowForStart } from "../../lib/league-config";
+import { competitionWeekLabels, leagueSeasonWeeks, leagueWeekKey, leagueWeekWindow, leagueWeekWindowForStart } from "../../lib/league-config";
 import { getLeagueSettings } from "../../lib/league-settings";
 
 async function loadGames(league: string | null, start: string, end: string, includeStarted: boolean) {
   return env.DB.prepare("SELECT id,league,away_team AS awayTeam,home_team AS homeTeam,kickoff_at AS kickoffAt,status,odds_provider AS oddsProvider,odds_captured_at AS oddsCapturedAt FROM games WHERE (? IS NULL OR league=?) AND datetime(kickoff_at)>=datetime(?) AND datetime(kickoff_at)<datetime(?) AND (? = 1 OR datetime(kickoff_at)>datetime('now')) ORDER BY kickoff_at LIMIT 250").bind(league, league, start, end, includeStarted ? 1 : 0).all<Record<string, unknown>>();
 }
 
-function serializeWeek(week: { key: string; label: string; start: Date; end: Date }, currentKey: string) {
+function serializeWeek(week: { key: string; label: string; start: Date; end: Date }, currentKey: string, seasonId: string) {
+  const competition = competitionWeekLabels(seasonId, week.key);
   return {
     key: week.key,
     label: week.label,
+    competitionLabel: competition?.combined ?? week.label,
     start: week.start.toISOString(),
     end: week.end.toISOString(),
     isCurrent: week.key === currentKey,
@@ -51,8 +53,8 @@ export async function GET(request: Request) {
     games: results,
     sync: sync.results,
     feedConfigured,
-    week: serializeWeek(selectedWeek, currentKey),
-    weeks: seasonWeeks.map((week) => serializeWeek(week, currentKey)),
+    week: serializeWeek(selectedWeek, currentKey, settings.seasonId),
+    weeks: seasonWeeks.map((week) => serializeWeek(week, currentKey, settings.seasonId)),
     oddsStaleHours: settings.oddsStaleHours,
   });
 }
