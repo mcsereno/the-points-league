@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { cfbWeekZeroKey, leagueSeasonWeeks, leagueWeekKey, leagueWeekWindowForStart, type LeagueWeek } from "./league-config";
 import { getLeagueSettings } from "./league-settings";
+import { rebuyRequestReference } from "./request-id";
 
 type LifecycleMember = { id: number; email: string; balance: number; rebuyCount: number; createdAt: string; status: string };
 
@@ -157,27 +158,43 @@ export async function canMemberRebuy(member: Pick<LifecycleMember, "id" | "email
   return !pending;
 }
 
-export async function requestMemberRebuy(member: Pick<LifecycleMember, "id" | "email" | "balance" | "status">) {
-  if (!await canMemberRebuy(member)) throw new Error("A rebuy is not available for this entry.");
+export async function requestMemberRebuy(member: Pick<LifecycleMember, "id" | "email" | "balance" | "status">, requestId: string) {
   const settings = await getLeagueSettings();
+  const reference = rebuyRequestReference(settings.seasonId, member.id, requestId);
+  const priorRequest = await env.DB.prepare("SELECT id FROM ledger_entries WHERE reference=?").bind(reference).first<{ id: number }>();
+  if (priorRequest) {
+    const updated = await env.DB.prepare("SELECT balance,rebuy_count AS rebuyCount FROM members WHERE id=?").bind(member.id).first<{ balance: number; rebuyCount: number }>();
+    return { balance: Number(updated?.balance ?? member.balance), rebuyCount: Number(updated?.rebuyCount ?? 0), duplicate: true };
+  }
+  if (!await canMemberRebuy(member)) throw new Error("A rebuy is not available for this entry.");
   const current = await env.DB.prepare("SELECT id,email,balance,rebuy_count AS rebuyCount,status FROM members WHERE id=?").bind(member.id).first<LifecycleMember>();
   if (!current || !await canMemberRebuy(current)) throw new Error("A rebuy is not available for this entry.");
   const nextRebuy = Number(current.rebuyCount) + 1;
-  const reference = `rebuy:${settings.seasonId}:${current.id}:${nextRebuy}`;
-  const existing = await env.DB.prepare("SELECT id FROM ledger_entries WHERE reference=?").bind(reference).first<{ id: number }>();
-  if (!existing) {
-    await env.DB.batch([
-      env.DB.prepare(`
-        UPDATE members
-        SET balance=ROUND(balance+?,2),rebuy_count=rebuy_count+1,updated_at=CURRENT_TIMESTAMP
-        WHERE id=? AND status='approved' AND balance<=0
-      `).bind(settings.rebuyStartingPoints, current.id),
-      env.DB.prepare(`
-        INSERT OR IGNORE INTO ledger_entries (member_email,entry_type,amount,reference,note)
-        VALUES (?,'rebuy',?,?,?)
-      `).bind(current.email, settings.rebuyStartingPoints, reference, `Rebuy ${nextRebuy}: restored ${settings.rebuyStartingPoints.toFixed(2)} Points.`),
-    ]);
-  }
+  await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE members
+      SET balance=ROUND(balance+?,2),rebuy_count=rebuy_count+1,rebuy_request_id=?,updated_at=CURRENT_TIMESTAMP
+      WHERE id=? AND status='approved' AND balance<=0 AND rebuy_count=?
+    `).bind(settings.rebuyStartingPoints, requestId, current.id, current.rebuyCount),
+    env.DB.prepare(`
+      INSERT OR IGNORE INTO ledger_entries (member_email,entry_type,amount,reference,note)
+      SELECT ?,'rebuy',?,?,?
+      WHERE EXISTS (
+        SELECT 1 FROM members
+        WHERE id=? AND rebuy_request_id=? AND rebuy_count=?
+      )
+    `).bind(
+      current.email,
+      settings.rebuyStartingPoints,
+      reference,
+      `Rebuy ${nextRebuy}: restored ${settings.rebuyStartingPoints.toFixed(2)} Points.`,
+      current.id,
+      requestId,
+      nextRebuy,
+    ),
+  ]);
+  const completed = await env.DB.prepare("SELECT id FROM ledger_entries WHERE reference=?").bind(reference).first<{ id: number }>();
+  if (!completed) throw new Error("A rebuy is not available for this entry.");
   const updated = await env.DB.prepare("SELECT balance,rebuy_count AS rebuyCount FROM members WHERE id=?").bind(current.id).first<{ balance: number; rebuyCount: number }>();
   return { balance: Number(updated?.balance ?? 0), rebuyCount: Number(updated?.rebuyCount ?? current.rebuyCount) };
 }
