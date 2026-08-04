@@ -59,12 +59,34 @@ export async function settleCompletedGames() {
   const settings = await getLeagueSettings();
   const expired = await voidExpiredGames(settings);
   const legs = await env.DB.prepare(`
-    SELECT wl.id,wl.wager_id AS wagerId,wl.market,o.side,wl.locked_line AS lockedLine,wl.teased_line AS teasedLine,g.away_score AS awayScore,g.home_score AS homeScore
+    SELECT
+      wl.id,
+      wl.wager_id AS wagerId,
+      wl.market,
+      COALESCE(
+        wl.locked_side,
+        CASE
+          WHEN wl.market='total' AND lower(wl.selection) IN ('over','under') THEN lower(wl.selection)
+          WHEN wl.selection=g.away_team THEN 'away'
+          WHEN wl.selection=g.home_team THEN 'home'
+        END
+      ) AS side,
+      wl.locked_line AS lockedLine,
+      wl.teased_line AS teasedLine,
+      g.away_score AS awayScore,
+      g.home_score AS homeScore
     FROM wager_legs wl
     JOIN wagers w ON w.id=wl.wager_id
-    JOIN outcomes o ON o.id=wl.outcome_id
     JOIN games g ON g.id=wl.game_id
     WHERE w.status='pending' AND wl.result='pending' AND g.status='completed' AND g.away_score IS NOT NULL AND g.home_score IS NOT NULL
+      AND COALESCE(
+        wl.locked_side,
+        CASE
+          WHEN wl.market='total' AND lower(wl.selection) IN ('over','under') THEN lower(wl.selection)
+          WHEN wl.selection=g.away_team THEN 'away'
+          WHEN wl.selection=g.home_team THEN 'home'
+        END
+      ) IS NOT NULL
   `).all<PendingLeg>();
   const touched = new Set<number>();
   for (const leg of legs.results as PendingLeg[]) {
