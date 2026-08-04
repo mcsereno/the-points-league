@@ -95,6 +95,7 @@ export const wagerLegs = sqliteTable("wager_legs", {
   gameId: text("game_id").notNull().references(() => games.id),
   outcomeId: text("outcome_id").notNull(),
   market: text("market").notNull(),
+  lockedSide: text("locked_side"),
   selection: text("selection").notNull(),
   lockedLine: real("locked_line"),
   lockedPrice: integer("locked_price").notNull(),
