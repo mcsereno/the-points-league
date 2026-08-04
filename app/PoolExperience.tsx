@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { LeagueSettings } from "./lib/league-config";
 import { isApprovedMember } from "./lib/member-access";
 
@@ -92,6 +92,7 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
   const [selectedWeekKey, setSelectedWeekKey] = useState<string | null>(null);
   const [portal, setPortal] = useState<PortalSnapshot | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const wagerRequestId = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -155,6 +156,7 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
               return !live || live.price !== selection.odds || (live.line ?? selection.line) !== selection.line;
             });
             if (changed) setNotice("Lines updated. Review your selections before placing the wager.");
+            if (changed) wagerRequestId.current = null;
             return changed ? [] : current;
           });
           const capturedLabel = latestCapturedAt
@@ -163,6 +165,7 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
           setFeedLabel(`LIVE ${normalized[0]?.network ?? ""} LINES${capturedLabel}`);
         } else {
           setTicket([]);
+          wagerRequestId.current = null;
           setFeedLabel(payload.feedConfigured ? "NO LINES POSTED" : "LINE FEED NOT CONFIGURED");
         }
       })
@@ -170,6 +173,7 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
         if (!active) return;
         setBoardGames([]);
         setTicket([]);
+        wagerRequestId.current = null;
         setFeedLabel("LINE FEED UNAVAILABLE");
       });
     };
@@ -213,6 +217,7 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
       return;
     }
     setTicket((current) => {
+      wagerRequestId.current = null;
       if (betType === "Single") return [selection];
       if (current.some((leg) => leg.id === selection.id)) return current.filter((leg) => leg.id !== selection.id);
       const withoutSameGame = current.filter((leg) => leg.gameId !== selection.gameId);
@@ -225,6 +230,7 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
   const changeBetType = (next: BetType) => {
     setBetType(next);
     setTicket([]);
+    wagerRequestId.current = null;
     setNotice("");
     if (next === "Teaser" && activeMarket === "Moneyline") setMarket("Spread");
   };
@@ -246,13 +252,14 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
     setSubmitting(true);
     setNotice("");
     try {
+      wagerRequestId.current ??= crypto.randomUUID();
       const response = await fetch("/api/wagers", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           betType: betType.toLowerCase(),
           stake,
-          requestId: crypto.randomUUID(),
+          requestId: wagerRequestId.current,
           teaserPoints: betType === "Teaser" ? teaserPoints : undefined,
           legs: ticket.map((leg) => ({ outcomeId: leg.id })),
         }),
@@ -265,6 +272,7 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
       setNotice(`${stake.toLocaleString()} Points wagered. The ticket is in My Portal.`);
       setTicket([]);
       setStake(100);
+      wagerRequestId.current = null;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "The wager could not be placed.");
     } finally {
@@ -347,6 +355,7 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
                     onChange={(event) => {
                       setSelectedWeekKey(event.target.value);
                       setTicket([]);
+                      wagerRequestId.current = null;
                       setNotice("");
                     }}
                   >
@@ -422,11 +431,17 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
               {ticket.length ? (
                 <>
                   {betType === "Teaser" && (
-                    <label className="teaser-control"><span>TEASER POINTS</span><select value={teaserPoints} onChange={(event) => setTeaserPoints(Number(event.target.value))}><option value={settings.teaserPoints}>{settings.teaserPoints} points</option></select></label>
+                    <label className="teaser-control"><span>TEASER POINTS</span><select value={teaserPoints} onChange={(event) => {
+                      wagerRequestId.current = null;
+                      setTeaserPoints(Number(event.target.value));
+                    }}><option value={settings.teaserPoints}>{settings.teaserPoints} points</option></select></label>
                   )}
                   {ticket.map((leg) => (
                     <div className="ticket" key={leg.id}>
-                      <button className="ticket-close" onClick={() => setTicket((current) => current.filter((item) => item.id !== leg.id))} aria-label={`Remove ${leg.pick}`}>×</button>
+                      <button className="ticket-close" onClick={() => {
+                        wagerRequestId.current = null;
+                        setTicket((current) => current.filter((item) => item.id !== leg.id));
+                      }} aria-label={`Remove ${leg.pick}`}>×</button>
                       <small>{leg.market.toUpperCase()} · {betType === "Single" ? "STRAIGHT" : "LEG"}</small>
                       <strong>{betType === "Teaser" ? teasedPick(leg, teaserPoints) : leg.pick}</strong>
                       <span>{leg.game}</span>
@@ -436,10 +451,16 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
                   {betType !== "Single" && ticket.length < 2 && <p className="leg-note">Add at least one more game to complete this {betType.toLowerCase()}.</p>}
                   <label className="stake-field">
                     <span>WAGER</span>
-                    <div><input min="0.01" step="0.01" type="number" value={stake} onChange={(event) => setStake(Number(event.target.value))} /><b>PTS</b></div>
+                    <div><input min="0.01" step="0.01" type="number" value={stake} onChange={(event) => {
+                      wagerRequestId.current = null;
+                      setStake(Number(event.target.value));
+                    }} /><b>PTS</b></div>
                   </label>
                   <div className="quick-stakes">
-                    {[25, 50, 100, 250].map((value) => <button key={value} onClick={() => setStake(value)}>+{value}</button>)}
+                    {[25, 50, 100, 250].map((value) => <button key={value} onClick={() => {
+                      wagerRequestId.current = null;
+                      setStake(value);
+                    }}>+{value}</button>)}
                   </div>
                   <div className="slip-totals"><span>{betType} price</span><strong>{ticketOdds ? formatOdds(ticketOdds) : "—"}</strong></div>
                   <div className="slip-totals"><span>Potential return</span><strong>{minimumLegsMet ? returnValue.toLocaleString() : "—"} PTS</strong></div>
