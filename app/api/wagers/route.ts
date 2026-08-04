@@ -3,6 +3,7 @@ import { getSessionMember } from "../../lib/auth";
 import { leagueWeekWindow } from "../../lib/league-config";
 import { getLeagueSettings } from "../../lib/league-settings";
 import { isSameOrigin } from "../../lib/portal-auth";
+import { requestIdOrNew } from "../../lib/request-id";
 
 type BetType = "single" | "parlay" | "teaser";
 type WagerRequest = {
@@ -57,9 +58,7 @@ export async function POST(request: Request) {
   const betType = body.betType;
   const stake = Number(body.stake);
   const legs = Array.isArray(body.legs) ? body.legs : [];
-  const requestId = typeof body.requestId === "string" && /^[a-zA-Z0-9-]{16,80}$/.test(body.requestId)
-    ? body.requestId
-    : crypto.randomUUID();
+  const requestId = requestIdOrNew(body.requestId);
   if (!betType || !["single", "parlay", "teaser"].includes(betType)) {
     return Response.json({ error: "Choose a valid wager type." }, { status: 400 });
   }
