@@ -19,7 +19,6 @@ type RundownEvent = {
   markets?: RundownMarket[];
 };
 type RundownPayload = { events?: RundownEvent[] };
-type RundownDatesPayload = { dates?: string[] };
 type SelectedOutcome = { name: string; point: number | null; price: number };
 type SelectedMarket = { market: MarketName; provider: string; outcomes: SelectedOutcome[] };
 
@@ -129,10 +128,6 @@ function sportIdsFor(league: League, date: string) {
   return [2];
 }
 
-function dateKey(value: unknown) {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value) ? value.slice(0, 10) : null;
-}
-
 function rundownEventsUrl(sportId: number, date: string) {
   const url = new URL(`https://therundown.io/api/v2/sports/${sportId}/events/${date}`);
   url.searchParams.set("affiliate_ids", "3,19,23");
@@ -206,34 +201,19 @@ function outcomeIdentity(gameId: string, market: MarketName, outcome: SelectedOu
   return `${gameId}:${market}:${outcome.name}`.toLowerCase().replace(/[^a-z0-9:]+/g, "-");
 }
 
-async function fetchRundownEvents(league: League, apiKey: string, seasonId: string, weekKey?: string) {
+function likelyNflGameDate(date: string) {
+  const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+  return weekday === 0 || weekday === 1 || weekday >= 4;
+}
+
+async function fetchRundownEvents(league: League, apiKey: string, seasonId: string, weekKey?: string, scanDates = false) {
   const events: RundownEvent[] = [];
   let lastResponse: Response | null = null;
   const eligibleDates = new Set(refreshWeekDates(seasonId, weekKey));
-  const sportIds = new Set([...eligibleDates].flatMap((date) => sportIdsFor(league, date)));
-  const eventRequests: Array<{ sportId: number; date: string }> = [];
-
-  // A refresh covers one Tuesday–Monday pool week. The available-dates endpoint
-  // avoids empty event requests while keeping manual and scheduled refreshes
-  // bounded to the selected slate.
-  for (const sportId of sportIds) {
-    const datesUrl = new URL(`https://therundown.io/api/v2/sports/${sportId}/dates`);
-    datesUrl.searchParams.set("offset", "300");
-    const request = await requestRundown(datesUrl, apiKey);
-    if (!request.response || request.error) return { events, response: request.response ?? lastResponse, error: request.error ?? "TheRundown service unavailable." };
-    lastResponse = request.response;
-
-    let payload: RundownDatesPayload;
-    try {
-      payload = await lastResponse.json() as RundownDatesPayload;
-    } catch {
-      return { events, response: lastResponse, error: "TheRundown returned unreadable available-date data." };
-    }
-    for (const date of payload.dates ?? []) {
-      const key = dateKey(date);
-      if (key && eligibleDates.has(key)) eventRequests.push({ sportId, date: key });
-    }
-  }
+  const dates = [...eligibleDates]
+    .filter((date) => !scanDates || league !== "nfl" || likelyNflGameDate(date))
+    .sort();
+  const eventRequests = dates.flatMap((date) => sportIdsFor(league, date).map((sportId) => ({ sportId, date })));
 
   for (const { sportId, date } of eventRequests) {
     const request = await requestRundown(rundownEventsUrl(sportId, date), apiKey);
@@ -251,7 +231,7 @@ async function fetchRundownEvents(league: League, apiKey: string, seasonId: stri
   return { events, response: lastResponse, error: null };
 }
 
-export async function syncLeagueOdds(league: League, force = false, weekKey?: string) {
+export async function syncLeagueOdds(league: League, force = false, weekKey?: string, scanDates = false) {
   const apiKey = (env as unknown as Record<string, string | undefined>).RUNDOWN_API_KEY;
   if (!apiKey) return { league, ok: false, skipped: true, reason: "RUNDOWN_API_KEY is not configured." };
   const settings = await getLeagueSettings();
@@ -264,7 +244,7 @@ export async function syncLeagueOdds(league: League, force = false, weekKey?: st
   if (weekKey && !leagueSeasonWeeks(settings.seasonId).some((week) => week.key === weekKey)) {
     return { league, ok: false, skipped: false, reason: "The selected week is outside the current season." };
   }
-  const result = await fetchRundownEvents(league, apiKey, settings.seasonId, weekKey);
+  const result = await fetchRundownEvents(league, apiKey, settings.seasonId, weekKey, scanDates);
   if (result.error) {
     await recordState(league, false, result.response, result.error);
     return { league, ok: false, skipped: false, reason: result.error };
@@ -311,7 +291,7 @@ export async function syncNflPreseasonOdds(force = false) {
   let spreadGames = 0;
 
   for (const weekKey of weeks) {
-    const result = await syncLeagueOdds("nfl", force, weekKey);
+    const result = await syncLeagueOdds("nfl", force, weekKey, true);
     if (!result.ok) return { ...result, weeks: weeks.length, games, spreadGames };
     games += Number(result.games ?? 0);
     spreadGames += Number(result.spreadGames ?? 0);
