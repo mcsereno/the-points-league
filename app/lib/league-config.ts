@@ -323,10 +323,10 @@ export function competitionWeekLabels(seasonId: string, weekKey: string): Compet
   const nflIndex = weekNumberFrom(nflWeekOne);
   const cfbIndex = weekNumberFrom(cfbWeekZero);
 
-  const nfl = nflIndex === -6
+  const nfl = nflIndex === -5
     ? "NFL Hall of Fame Game"
-    : nflIndex >= -5 && nflIndex <= -3
-      ? `NFL Preseason Week ${nflIndex + 6}`
+    : nflIndex >= -4 && nflIndex <= -2
+      ? `NFL Preseason Week ${nflIndex + 5}`
       : nflIndex >= 0 && nflIndex <= 17
         ? `NFL Week ${nflIndex + 1}`
         : nflIndex > 17
