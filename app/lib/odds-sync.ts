@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { leagueSeasonWeeks, leagueWeekWindow, leagueWeekWindowForStart, nflPreseasonWeekKeys } from "./league-config";
+import { leagueSeasonWeeks, leagueWeekKey, leagueWeekWindow, leagueWeekWindowForStart, nflPreseasonWeekKeys } from "./league-config";
 import { getLeagueSettings } from "./league-settings";
 import { alertCommissionerOnce } from "./operations";
 import { settleCompletedGames, syncLeagueScores } from "./settlement";
@@ -240,7 +240,7 @@ async function syncEspnNflPreseasonOdds(seasonId: string) {
     .filter(likelyNflGameDate);
   const responses = await Promise.all(dates.map(async (date) => {
     try {
-      const response = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${date}&seasontype=1&limit=100`);
+      const response = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${date.replaceAll("-", "")}&seasontype=1&limit=100`);
       if (!response.ok) return [] as EspnEvent[];
       const payload = await response.json() as EspnScoreboard;
       return payload.events ?? [];
@@ -403,6 +403,10 @@ export function isScheduledFeedTime(date: Date) {
   ]);
 }
 
+function isNflPreseasonWeek(date: Date, seasonId: string) {
+  return nflPreseasonWeekKeys(seasonId).includes(leagueWeekKey(leagueWeekWindow(date)));
+}
+
 function isSeasonLifecycleTime(date: Date) {
   // The league week ends Monday. One Tuesday morning pass avoids charging a
   // member before late Monday games and their scores have had time to settle.
@@ -414,8 +418,14 @@ export async function runScheduledFeeds(scheduledTime: number) {
   const scores = await Promise.all([syncLeagueScores("nfl"), syncLeagueScores("cfb")]);
   const settlement = await settleCompletedGames();
   const lifecycle = isSeasonLifecycleTime(scheduledDate) ? await runSeasonLifecycle(scheduledDate) : null;
+  const settings = await getLeagueSettings();
   const odds = isScheduledFeedTime(scheduledDate)
-    ? [await syncLeagueOdds("nfl"), await syncLeagueOdds("cfb")]
+    ? [
+      isNflPreseasonWeek(scheduledDate, settings.seasonId)
+        ? await syncNflPreseasonOdds()
+        : await syncLeagueOdds("nfl"),
+      await syncLeagueOdds("cfb"),
+    ]
     : [];
   const failures = [...scores, ...odds].filter((item) => !item.ok && !item.skipped);
   const day = new Date(scheduledTime).toISOString().slice(0, 10);
