@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { leagueSeasonWeeks, leagueWeekWindow, leagueWeekWindowForStart } from "./league-config";
+import { leagueSeasonWeeks, leagueWeekWindow, leagueWeekWindowForStart, nflPreseasonWeekKeys } from "./league-config";
 import { getLeagueSettings } from "./league-settings";
 import { alertCommissionerOnce } from "./operations";
 import { settleCompletedGames, syncLeagueScores } from "./settlement";
@@ -114,7 +114,7 @@ function refreshWeekDates(seasonId: string, weekKey?: string) {
 function sportIdsFor(league: League, date: string) {
   if (league === "cfb") return [1];
   const month = Number(date.slice(5, 7));
-  if (month === 8) return [25];
+  if (month === 7 || month === 8) return [25];
   if (month === 1 || month === 2) return [2, 26];
   return [2];
 }
@@ -129,6 +129,7 @@ function rundownEventsUrl(sportId: number, date: string, apiKey: string) {
   url.searchParams.set("affiliate_ids", "19,23");
   url.searchParams.set("market_ids", "1,2,3");
   url.searchParams.set("main_line", "true");
+  url.searchParams.set("hide_closed", "true");
   url.searchParams.set("offset", "300");
   return url;
 }
@@ -285,6 +286,20 @@ export async function syncLeagueOdds(league: League, force = false, weekKey?: st
 
   await recordState(league, true, result.response, null);
   return { league, ok: true, skipped: false, reason: null, games };
+}
+
+export async function syncNflPreseasonOdds(force = false) {
+  const settings = await getLeagueSettings();
+  const weeks = nflPreseasonWeekKeys(settings.seasonId);
+  let games = 0;
+
+  for (const weekKey of weeks) {
+    const result = await syncLeagueOdds("nfl", force, weekKey);
+    if (!result.ok) return { ...result, weeks: weeks.length, games };
+    games += Number(result.games ?? 0);
+  }
+
+  return { league: "nfl" as const, ok: true, skipped: false, reason: null, weeks: weeks.length, games };
 }
 
 type CentralScheduleTarget = { weekdays: string[]; hour: number };
