@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { isSameOrigin, requireCommissioner } from "../../../lib/portal-auth";
 import { recordAudit } from "../../../lib/audit";
+import { getLeagueSettings } from "../../../lib/league-settings";
 
 export async function POST(request: Request) {
   if (!isSameOrigin(request)) {
@@ -11,7 +12,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "Commissioner access required." }, { status: 403 });
   }
 
-  const body = await request.json() as { wagerId?: number; reason?: string };
+  const body = await request.json() as { wagerId?: number; reason?: string; clearError?: boolean };
   const wagerId = Number(body.wagerId);
   const reason = String(body.reason ?? "").trim();
   if (!Number.isInteger(wagerId) || wagerId <= 0) {
@@ -22,7 +23,7 @@ export async function POST(request: Request) {
   }
 
   const wager = await env.DB.prepare(`
-    SELECT id,player_key AS playerKey,stake,status,COALESCE(payout,0) AS payout
+    SELECT id,player_key AS playerKey,stake,status,COALESCE(payout,0) AS payout,settled_at AS settledAt
     FROM wagers
     WHERE id=?
   `).bind(wagerId).first<{
@@ -31,9 +32,18 @@ export async function POST(request: Request) {
     stake: number;
     status: string;
     payout: number;
+    settledAt: string | null;
   }>();
   if (!wager) return Response.json({ error: "Ticket not found." }, { status: 404 });
   if (wager.status === "void") return Response.json({ ok: true, duplicate: true });
+  if (wager.status !== "pending" && wager.settledAt) {
+    const settings = await getLeagueSettings();
+    const correctionDeadline = new Date(new Date(wager.settledAt).getTime() + settings.correctionHours * 60 * 60 * 1_000);
+    const clearErrorAllowed = settings.clearErrorCorrectionUntilFinal && body.clearError === true;
+    if (Date.now() > correctionDeadline.getTime() && !clearErrorAllowed) {
+      return Response.json({ error: `The ${settings.correctionHours}-hour correction window has closed. Mark this as a clear grading or data error to continue.` }, { status: 409 });
+    }
+  }
 
   const adjustment = Number(wager.stake) - Number(wager.payout);
   const reference = `wager:${wagerId}:void`;
@@ -58,7 +68,7 @@ export async function POST(request: Request) {
     `).bind(note, wagerId),
   ]);
 
-  await recordAudit("wager_voided","wager",wagerId,commissioner.member.email,{reason,payout:Number(wager.stake)});
+  await recordAudit("wager_voided","wager",wagerId,commissioner.member.email,{reason,payout:Number(wager.stake),clearError:Boolean(body.clearError)});
 
   return Response.json({ ok: true, status: "void", payout: Number(wager.stake) });
 }
