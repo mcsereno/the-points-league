@@ -323,10 +323,10 @@ export function competitionWeekLabels(seasonId: string, weekKey: string): Compet
   const nflIndex = weekNumberFrom(nflWeekOne);
   const cfbIndex = weekNumberFrom(cfbWeekZero);
 
-  const nfl = nflIndex === -5
+  const nfl = nflIndex === -6
     ? "NFL Hall of Fame Game"
-    : nflIndex >= -4 && nflIndex <= -2
-      ? `NFL Preseason Week ${nflIndex + 5}`
+    : nflIndex >= -5 && nflIndex <= -3
+      ? `NFL Preseason Week ${nflIndex + 6}`
       : nflIndex >= 0 && nflIndex <= 17
         ? `NFL Week ${nflIndex + 1}`
         : nflIndex > 17
@@ -338,6 +338,15 @@ export function competitionWeekLabels(seasonId: string, weekKey: string): Compet
       ? "CFB Postseason"
       : "CFB Preseason";
   return { nfl, cfb, combined: `${nfl} · ${cfb}` };
+}
+
+export function nflPreseasonWeekKeys(seasonId: string) {
+  return leagueSeasonWeeks(seasonId)
+    .filter((week) => {
+      const label = competitionWeekLabels(seasonId, week.key)?.nfl;
+      return label === "NFL Hall of Fame Game" || label?.startsWith("NFL Preseason Week ");
+    })
+    .map((week) => week.key);
 }
 
 export function validateLeagueSettings(value: unknown): LeagueSettings {
