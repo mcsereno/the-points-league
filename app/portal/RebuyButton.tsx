@@ -1,16 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 export function RebuyButton() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const requestId = useRef<string | null>(null);
 
   const rebuy = async () => {
     setLoading(true);
     setMessage("");
     try {
-      const response = await fetch("/api/rebuys", { method: "POST" });
+      requestId.current ??= crypto.randomUUID();
+      const response = await fetch("/api/rebuys", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ requestId: requestId.current }),
+      });
       const body = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(body.error ?? "The rebuy could not be completed.");
       window.location.reload();
