@@ -24,7 +24,17 @@ type SelectedOutcome = { name: string; point: number | null; price: number };
 type SelectedMarket = { market: MarketName; provider: string; outcomes: SelectedOutcome[] };
 
 const MINIMUM_INTERVAL_MINUTES = 15;
-const RUNDOWN_AFFILIATE_IDS = { draftkings: "19", fanduel: "23" } as const;
+const RUNDOWN_AFFILIATE_IDS = { pinnacle: "3", draftkings: "19", fanduel: "23" } as const;
+const RUNDOWN_PROVIDER_NAMES: Record<string, string> = {
+  [RUNDOWN_AFFILIATE_IDS.draftkings]: "DraftKings",
+  [RUNDOWN_AFFILIATE_IDS.fanduel]: "FanDuel",
+  [RUNDOWN_AFFILIATE_IDS.pinnacle]: "Pinnacle",
+};
+const RUNDOWN_PROVIDER_PRIORITY = [
+  RUNDOWN_AFFILIATE_IDS.draftkings,
+  RUNDOWN_AFFILIATE_IDS.fanduel,
+  RUNDOWN_AFFILIATE_IDS.pinnacle,
+];
 const RUNDOWN_REQUEST_INTERVAL_MS = 1_050;
 let nextRundownRequestAt = 0;
 
@@ -44,11 +54,11 @@ async function waitForRundownRequestSlot() {
   nextRundownRequestAt = Date.now() + RUNDOWN_REQUEST_INTERVAL_MS;
 }
 
-async function requestRundown(url: URL) {
+async function requestRundown(url: URL, apiKey: string) {
   await waitForRundownRequestSlot();
   let response: Response;
   try {
-    response = await fetch(url, { headers: { accept: "application/json" } });
+    response = await fetch(url, { headers: { accept: "application/json", "x-therundown-key": apiKey } });
   } catch {
     return { response: null, error: "TheRundown service unavailable." };
   }
@@ -62,7 +72,7 @@ async function requestRundown(url: URL) {
   await pause(retryAfter * 1_000);
   await waitForRundownRequestSlot();
   try {
-    response = await fetch(url, { headers: { accept: "application/json" } });
+    response = await fetch(url, { headers: { accept: "application/json", "x-therundown-key": apiKey } });
   } catch {
     return { response: null, error: "TheRundown service unavailable." };
   }
@@ -123,13 +133,11 @@ function dateKey(value: unknown) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value) ? value.slice(0, 10) : null;
 }
 
-function rundownEventsUrl(sportId: number, date: string, apiKey: string) {
+function rundownEventsUrl(sportId: number, date: string) {
   const url = new URL(`https://therundown.io/api/v2/sports/${sportId}/events/${date}`);
-  url.searchParams.set("key", apiKey);
-  url.searchParams.set("affiliate_ids", "19,23");
+  url.searchParams.set("affiliate_ids", "3,19,23");
   url.searchParams.set("market_ids", "1,2,3");
   url.searchParams.set("main_line", "true");
-  url.searchParams.set("hide_closed", "true");
   url.searchParams.set("offset", "300");
   return url;
 }
@@ -159,32 +167,39 @@ function mainLine(participant: RundownParticipant, affiliateId: string) {
   });
 }
 
-function selectedMarket(event: RundownEvent, market: RundownMarket, provider: "draftkings" | "fanduel") {
+function selectedMarket(event: RundownEvent, market: RundownMarket) {
   const name = marketName(market.market_id);
   if (!name || market.period_id && market.period_id !== 0) return null;
-  const affiliateId = RUNDOWN_AFFILIATE_IDS[provider];
-  const outcomes = (market.participants ?? []).flatMap((participant) => {
-    const line = mainLine(participant, affiliateId);
-    const price = line?.prices?.[affiliateId]?.price;
-    if (!line || !validPrice(price)) return [];
-    const point = line.value == null || line.value === "" ? null : Number(line.value);
-    if (point != null && !Number.isFinite(point)) return [];
-    return [{ name: participant.name, point, price: Math.trunc(price) }];
-  });
   const teams = eventTeams(event);
-  const isComplete = name === "total"
-    ? new Set(outcomes.map((outcome) => outcome.name.toLowerCase())).size === 2
-      && outcomes.some((outcome) => outcome.name.toLowerCase() === "over")
-      && outcomes.some((outcome) => outcome.name.toLowerCase() === "under")
-    : Boolean(teams && outcomes.some((outcome) => outcome.name === teams.away) && outcomes.some((outcome) => outcome.name === teams.home));
-  return isComplete ? { market: name, provider: provider === "draftkings" ? "DraftKings" : "FanDuel", outcomes } satisfies SelectedMarket : null;
+  const availableIds = [...new Set((market.participants ?? []).flatMap((participant) => (
+    participant.lines?.flatMap((line) => Object.keys(line.prices ?? {})) ?? []
+  )))];
+  const affiliateIds = [...RUNDOWN_PROVIDER_PRIORITY, ...availableIds.filter((id) => !RUNDOWN_PROVIDER_PRIORITY.includes(id))];
+
+  for (const affiliateId of affiliateIds) {
+    const outcomes = (market.participants ?? []).flatMap((participant) => {
+      const line = mainLine(participant, affiliateId);
+      const price = line?.prices?.[affiliateId]?.price;
+      if (!line || !validPrice(price)) return [];
+      const point = line.value == null || line.value === "" ? null : Number(line.value);
+      if (point != null && !Number.isFinite(point)) return [];
+      return [{ name: participant.name, point, price: Math.trunc(price) }];
+    });
+    const isComplete = name === "total"
+      ? new Set(outcomes.map((outcome) => outcome.name.toLowerCase())).size === 2
+        && outcomes.some((outcome) => outcome.name.toLowerCase() === "over")
+        && outcomes.some((outcome) => outcome.name.toLowerCase() === "under")
+      : Boolean(teams && outcomes.some((outcome) => outcome.name === teams.away) && outcomes.some((outcome) => outcome.name === teams.home));
+    if (isComplete) return { market: name, provider: RUNDOWN_PROVIDER_NAMES[affiliateId] ?? "Available sportsbook", outcomes } satisfies SelectedMarket;
+  }
+  return null;
 }
 
 function chooseMarket(event: RundownEvent, marketNameToFind: MarketName) {
   const marketId = marketNameToFind === "moneyline" ? 1 : marketNameToFind === "spread" ? 2 : 3;
   const providerMarket = event.markets?.find((market) => market.market_id === marketId && (!market.period_id || market.period_id === 0));
   if (!providerMarket) return null;
-  return selectedMarket(event, providerMarket, "draftkings") ?? selectedMarket(event, providerMarket, "fanduel");
+  return selectedMarket(event, providerMarket);
 }
 
 function outcomeIdentity(gameId: string, market: MarketName, outcome: SelectedOutcome) {
@@ -203,9 +218,8 @@ async function fetchRundownEvents(league: League, apiKey: string, seasonId: stri
   // bounded to the selected slate.
   for (const sportId of sportIds) {
     const datesUrl = new URL(`https://therundown.io/api/v2/sports/${sportId}/dates`);
-    datesUrl.searchParams.set("key", apiKey);
     datesUrl.searchParams.set("offset", "300");
-    const request = await requestRundown(datesUrl);
+    const request = await requestRundown(datesUrl, apiKey);
     if (!request.response || request.error) return { events, response: request.response ?? lastResponse, error: request.error ?? "TheRundown service unavailable." };
     lastResponse = request.response;
 
@@ -222,7 +236,7 @@ async function fetchRundownEvents(league: League, apiKey: string, seasonId: stri
   }
 
   for (const { sportId, date } of eventRequests) {
-    const request = await requestRundown(rundownEventsUrl(sportId, date, apiKey));
+    const request = await requestRundown(rundownEventsUrl(sportId, date), apiKey);
     if (!request.response || request.error) return { events, response: request.response ?? lastResponse, error: request.error ?? "TheRundown service unavailable." };
     lastResponse = request.response;
     let payload: RundownPayload;
@@ -267,7 +281,7 @@ export async function syncLeagueOdds(league: League, force = false, weekKey?: st
     if (!teams || !selected.length) continue;
 
     await env.DB.prepare("INSERT INTO games (id,league,away_team,home_team,kickoff_at,status,odds_provider,odds_captured_at) VALUES (?,?,?,?,?,'scheduled',?,CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET away_team=excluded.away_team,home_team=excluded.home_team,kickoff_at=excluded.kickoff_at,odds_provider=excluded.odds_provider,odds_captured_at=CURRENT_TIMESTAMP")
-      .bind(gameId, league, teams.away, teams.home, event.event_date, "DraftKings · FanDuel backup").run();
+      .bind(gameId, league, teams.away, teams.home, event.event_date, [...new Set(selected.map((market) => market.provider))].join(" · ")).run();
     games += 1;
     if (selected.some((market) => market.market === "spread")) spreadGames += 1;
 
