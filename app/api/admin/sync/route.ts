@@ -36,7 +36,9 @@ export async function POST(request:Request){
     await recordAudit("manual_sync","feeds",preseason?"nfl-preseason":leagues.join("-"),commissioner.member.email,{leagues,week:preseason?null:weekKey,weekLabel:preseason?"NFL preseason":weekLabel,failed:failed.length,settlement});
     const sync=await env.DB.prepare("SELECT league,last_success_at AS lastSuccessAt,credits_remaining AS creditsRemaining,last_error AS lastError FROM odds_sync_state ORDER BY league").all();
     const scopeLabel=preseason?"all NFL preseason weeks":weekLabel;
-    return Response.json({ok:!failed.length,results:[...feedResults,settlement],sync:sync.results,message:failed.length?`One or more ${label} feeds could not refresh for ${scopeLabel}. ${failureSummary}`:`${label} markets refreshed for ${scopeLabel}.`},{status:failed.length?502:200});
+    const preseasonResult=preseason?oddsResults[0] as {games?:number;spreadGames?:number}:null;
+    const imported=preseason?` ${Number(preseasonResult?.games??0)} games imported; ${Number(preseasonResult?.spreadGames??0)} have complete spreads.`:"";
+    return Response.json({ok:!failed.length,results:[...feedResults,settlement],sync:sync.results,message:failed.length?`One or more ${label} feeds could not refresh for ${scopeLabel}. ${failureSummary}`:`${label} markets refreshed for ${scopeLabel}.${imported}`},{status:failed.length?502:200});
   }catch(error){
     console.error("Commissioner odds refresh failed",error);
     return Response.json({error:error instanceof Error?`Odds refresh failed: ${error.message}`:"Odds refresh failed before the service could return a result."},{status:500});
