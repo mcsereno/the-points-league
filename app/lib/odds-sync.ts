@@ -257,6 +257,7 @@ export async function syncLeagueOdds(league: League, force = false, weekKey?: st
   }
 
   let games = 0;
+  let spreadGames = 0;
   for (const event of result.events) {
     const teams = eventTeams(event);
     const gameId = `rundown:${event.event_id}`;
@@ -268,6 +269,7 @@ export async function syncLeagueOdds(league: League, force = false, weekKey?: st
     await env.DB.prepare("INSERT INTO games (id,league,away_team,home_team,kickoff_at,status,odds_provider,odds_captured_at) VALUES (?,?,?,?,?,'scheduled',?,CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET away_team=excluded.away_team,home_team=excluded.home_team,kickoff_at=excluded.kickoff_at,odds_provider=excluded.odds_provider,odds_captured_at=CURRENT_TIMESTAMP")
       .bind(gameId, league, teams.away, teams.home, event.event_date, "DraftKings · FanDuel backup").run();
     games += 1;
+    if (selected.some((market) => market.market === "spread")) spreadGames += 1;
 
     for (const market of selected) {
       const currentIds: string[] = [];
@@ -285,21 +287,23 @@ export async function syncLeagueOdds(league: League, force = false, weekKey?: st
   }
 
   await recordState(league, true, result.response, null);
-  return { league, ok: true, skipped: false, reason: null, games };
+  return { league, ok: true, skipped: false, reason: null, games, spreadGames };
 }
 
 export async function syncNflPreseasonOdds(force = false) {
   const settings = await getLeagueSettings();
   const weeks = nflPreseasonWeekKeys(settings.seasonId);
   let games = 0;
+  let spreadGames = 0;
 
   for (const weekKey of weeks) {
     const result = await syncLeagueOdds("nfl", force, weekKey);
-    if (!result.ok) return { ...result, weeks: weeks.length, games };
+    if (!result.ok) return { ...result, weeks: weeks.length, games, spreadGames };
     games += Number(result.games ?? 0);
+    spreadGames += Number(result.spreadGames ?? 0);
   }
 
-  return { league: "nfl" as const, ok: true, skipped: false, reason: null, weeks: weeks.length, games };
+  return { league: "nfl" as const, ok: true, skipped: false, reason: null, weeks: weeks.length, games, spreadGames };
 }
 
 type CentralScheduleTarget = { weekdays: string[]; hour: number };
