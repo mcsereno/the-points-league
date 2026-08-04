@@ -482,7 +482,6 @@ export function PoolExperience({ settings }: { settings: LeagueSettings }) {
               </div>
             </aside>}
           </div>
-          <p className="board-note">DraftKings is the source. FanDuel fills a market only when DraftKings does not have one. Weeks outside the current league week are view-only.</p>
         </div>
       </section>
 
